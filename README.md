@@ -1,113 +1,163 @@
 # AI-Assisted SDLC Orchestrator
 
-Platform-agnostic SDLC control plane. See [ai-sdlc-orchestrator-design.md](ai-sdlc-orchestrator-design.md) for the design.
+An **orchestrator agent** you chat with in GitHub Copilot (VS Code or CLI), Claude Code or Cursor. It takes a story (a Jira ticket or a plain description), decides how much process it needs, and drives it through **requirement → design → plan → implementation → test → review**. It keeps the state, stops for your approval on risky plans, and hands the actual analysis and coding to separate AI sessions so its own context stays small.
 
-- `src/workflow-state/`: MCP server. SQLite state, policy, gates, versioned artifacts, FTS5 precedent search.
-- `src/dispatch/`: MCP server. Runs analysis/coding/test sessions through pluggable AI platform adapters (Claude Code, Copilot CLI, Cursor Agent CLI, any custom CLI).
-- `orchestrator-agent/`: system prompt and skills (platform-neutral Markdown, injected into dispatched sessions).
-- `config/`: default policy, example config.
-- `clients/README.md`: registering with Copilot, Claude Code, Cursor, Claude Desktop.
+Design and rationale: [ai-sdlc-orchestrator-design.md](ai-sdlc-orchestrator-design.md).
 
-Requires Node 22.5+ (uses built-in `node:sqlite`; no native dependencies).
+```
+You ── chat ──> Orchestrator agent ──> workflow-state MCP  (tasks, stages, artifacts, approvals; SQLite)
+                                   └─> dispatch MCP        (starts worker sessions: Copilot CLI / Claude / Cursor / custom)
+                                   └─> Jira + GitHub MCP   (read tickets, find PRs)
+```
 
-> **Before your first real task, read [Important: set the model for dispatched sessions](#important-set-the-model-for-dispatched-sessions).** Dispatched sessions do not use your chat window's model unless you pin it, and they are billed separately.
+## Prerequisites
 
-## Build
+| Need | Why |
+|---|---|
+| Node 22.5 or newer | Runs the servers (uses built-in `node:sqlite`, no native packages) |
+| Git | Coding sessions work on a `task/<id>` branch |
+| A chat tool with MCP support: VS Code + GitHub Copilot, Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
+| The CLI of the AI that does the dispatched work, installed **and signed in** | Copilot: `npm install -g @github/copilot`, then run `copilot` once. Claude: `claude`. Cursor: `cursor-agent` |
+| Optional: Atlassian (Jira) and GitHub MCP access | Lets the agent read tickets and find PRs. You sign in when your tool prompts |
 
+## Install (about 5 minutes)
+
+**1. Build** (from this repo's folder; keep the folder where it is, because the tools point at it)
 ```
 npm install
-npm run build        # re-run after any code change; MCP servers run from dist/
-npm test
+npm run build
 ```
 
-## Commands
-
-Run from this repo's folder. Every command below is `node dist/cli.js ...`. After `npm link` (optional) you can type `sdlc-orchestrator ...` from anywhere instead.
-
-### Install the agent and MCP servers
-
+**2. Install the agent and register the servers** (pick your tool; `--repo` registers a repo, repeat it for several)
 ```
-# GitHub Copilot in VS Code, for all projects (writes the agent file and mcp.json in your VS Code user profile)
-node dist/cli.js install --target copilot
+# GitHub Copilot in VS Code
+node dist/cli.js install --target copilot --platform copilot --repo D:/work/ProjectA
 
-# GitHub Copilot CLI, for all projects (writes ~/.copilot/agents and ~/.copilot/mcp-config.json)
-node dist/cli.js install --target copilot-cli
-
-# both, and register your repos and the AI platform used for dispatched work
-node dist/cli.js install --target copilot --platform copilot --repo D:/work/ProjectA --repo D:/work/ProjectB
+# GitHub Copilot CLI (do this too if you use `copilot` in a terminal)
 node dist/cli.js install --target copilot-cli --platform copilot
-
-# other tools
-node dist/cli.js install --target claude
-node dist/cli.js install --target cursor
-node dist/cli.js install --target all
-
-# preview only, change nothing
-node dist/cli.js install --target copilot --dry-run
-
-# also put the agent file inside a repo (.github/agents/); servers stay in your user config
-node dist/cli.js install --target copilot --mode repo --repo D:/work/ProjectA
 ```
+Other tools: `--target claude`, `--target cursor`, `--target all`. Add `--dry-run` first to preview what would be written.
 
-Options: `--target copilot|copilot-cli|claude|cursor|all`, `--mode global|repo`, `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--profile`, `--insiders`, `--no-integrations`, `--jira-server`, `--github-server`, `--mcp-in-repo`, `--dry-run`. Run `node dist/cli.js --help` for details.
-
-Existing MCP config files are merged, not overwritten, and backed up as `.bak` (comments in a JSON file are not preserved). Re-run the install after editing `orchestrator-agent/SYSTEM_PROMPT.md` to refresh the agent files, then reload your tool.
-
-### Manage registered repos
-
-```
-node dist/cli.js repos list
-node dist/cli.js repos add D:/work/ProjectC D:/work/ProjectD
-node dist/cli.js repos remove D:/work/ProjectC
-```
-
-The agent offers registered repos when you do not name one.
-
-### Inspect tasks and artifacts
-
-```
-node dist/cli.js tasks list
-node dist/cli.js tasks show <task_id | JIRA-KEY | PR#>
-node dist/cli.js tasks show <task_id> --stage plan       # one stage only: requirement | design | plan
-node dist/cli.js tasks remove <task_id>                  # preview; add --yes to delete permanently (--with-children for sub-tasks)
-```
-
-`tasks show` prints the stage history and each artifact with its version, skill version, platform and the artifacts it was built from.
-
-## Important: set the model for dispatched sessions
-
-**The AI model in your chat window and the model used by dispatched sessions are separate settings.** The orchestrator runs in your chat window (the model you pick there). Each stage it dispatches (requirement, design, plan, coding) runs in a separate session of the platform's CLI, and that session uses the CLI's own default model, which may be larger and more expensive than the one you chose in chat. With the GitHub Copilot CLI the default was `claude-sonnet-5.5` when this was checked.
-
-Pin the model in `~/.ai-sdlc-orchestrator/config.json` (Windows: `C:\Users\<you>\.ai-sdlc-orchestrator\config.json`), then reload your editor so the dispatch server rereads it:
-
+**3. Pin the model for dispatched sessions** (important, see below). Edit `~/.ai-sdlc-orchestrator/config.json`:
 ```json
 {
   "default_platform": "copilot",
-  "platforms": {
-    "copilot": { "model": "gpt-6-luna" }
-  }
+  "platforms": { "copilot": { "model": "gpt-6-luna" } }
+}
+```
+Use the same model as your chat window. List valid names with `/model` inside `copilot`.
+
+**4. Reload VS Code** (Command Palette: "Developer: Reload Window"), then in the MCP servers list start `workflow-state`, `dispatch`, Atlassian and GitHub, and sign in to the last two when asked.
+
+**5. Check it works.** Open Copilot Chat, switch to agent mode, pick **orchestrator**, and say `hi`. You should get a list of what it can do. Then ask `which repos and AI platforms are set up?`
+
+### Important: the dispatched model is a separate setting
+
+The orchestrator runs in your chat window, using the model you picked there. Every stage it dispatches runs in a **separate CLI session with its own model and its own billing**. If you don't pin a model, the CLI uses its own default (for Copilot CLI this was `claude-sonnet-5.5`), which may be bigger and more expensive than your chat model. Set it in step 3, then reload so the dispatch server rereads the config. A single dispatch can also override it ("use model X for this stage"). To see what a run used, check the newest `process-*.log` in `~/.copilot/logs`. A wrong model name fails instantly at no cost. Sessions that explore a repo cost far more than a one-line reply, so try the pipeline on one small story first.
+
+## Use it
+
+Talk naturally. You never need to remember commands: **every reply ends with numbered Options** (confirm, revise, show, check status, run tests, cancel, remove...). Answer with the number or the words.
+
+**Start a story**
+```
+Work on D:/work/ProjectA: add retry with backoff to the email sender (needs a schema change)
+start jira PROJ-123
+```
+**See and continue stories**
+```
+what's open?            lists unfinished stories across your registered repos, numbered
+continue 2              resumes number 2
+resume PROJ-123         also works with a task id or PR number
+```
+**What happens to a story**
+1. The orchestrator triages it. A small, reversible change skips straight to implementation. A risky, breaking or vague one goes through **requirement → design → plan**.
+2. Each analysis stage runs in a read-only worker session and produces an **artifact**. You read it, answer its open questions, and **confirm** or **revise** it (revisions are stored as new versions).
+3. A risky **plan** stops at an approval gate. Implementation is refused until you say "approve the plan".
+4. Implementation runs on a `task/<id>` branch (never `main`), then tests, then review.
+5. If it says work is still running, say `check status`.
+
+**See artifacts**: ask in chat ("show the plan"), or from a terminal (see Commands). **Remove a story**: say `remove 2` (it asks you to confirm; `cancel` keeps the history, `remove` deletes it permanently).
+
+## Commands
+
+Run from this repo's folder. After `npm link` you can type `sdlc-orchestrator ...` instead of `node dist/cli.js ...` from anywhere.
+
+```
+# install / refresh (re-run after editing orchestrator-agent/SYSTEM_PROMPT.md, then reload your tool)
+node dist/cli.js install --target copilot|copilot-cli|claude|cursor|all [options]
+node dist/cli.js install --target copilot --mode repo --repo D:/work/ProjectA   # also put the agent file inside the repo
+
+# repos the agent can offer when you don't name one
+node dist/cli.js repos list
+node dist/cli.js repos add D:/work/ProjectB
+node dist/cli.js repos remove D:/work/ProjectB
+
+# stories and artifacts
+node dist/cli.js tasks list
+node dist/cli.js tasks show <task_id | JIRA-KEY | PR#>
+node dist/cli.js tasks show <task_id> --stage plan        # requirement | design | plan
+node dist/cli.js tasks remove <task_id>                   # preview; add --yes to delete (--with-children for sub-tasks)
+```
+
+Install options: `--target`, `--mode global|repo`, `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--profile <name>` and `--insiders` (VS Code only), `--no-integrations`, `--jira-server`, `--github-server`, `--mcp-in-repo`, `--dry-run`. `node dist/cli.js --help` lists them.
+
+Install writes, per target:
+
+| Target | Agent file | MCP servers |
+|---|---|---|
+| `copilot` | VS Code user `prompts/orchestrator.agent.md` | VS Code user `mcp.json` |
+| `copilot-cli` | `~/.copilot/agents/orchestrator.agent.md` | `~/.copilot/mcp-config.json` |
+| `claude` | `~/.claude/agents/orchestrator.md` | prints `claude mcp add` commands to run |
+| `cursor` | `.cursor/rules/` (repo mode only) | `~/.cursor/mcp.json` |
+
+Existing MCP config files are merged, backed up as `.bak`, and comments inside them are not preserved. The VS Code chat and the Copilot CLI read **different** MCP config files, which is why `copilot` and `copilot-cli` are separate targets.
+
+## Configuration
+
+Everything lives in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
+
+| File | Contents |
+|---|---|
+| `config.json` | Which AI platform and model do the work, per repo overrides, registered repos, custom platforms (example: `config/config.example.json`) |
+| `policy.json` | Stages, approval gates (with optional auto-approve timeout), retry limits. Invalid edits are rejected |
+| `workflow.db` | Tasks, history, artifacts, approvals (SQLite) |
+| `dispatches/` | One folder per worker session: the prompt sent, raw output, status |
+| `backups/` | Daily copy of `workflow.db`, newest 14 kept |
+
+Routing example: orchestrate from Copilot Chat, analysis on Claude, coding on Copilot, and a different tool for one repo:
+```json
+{
+  "default_platform": "copilot",
+  "analysis_platform": "claude",
+  "projects": { "D:/work/Legacy": { "coding_platform": "cursor", "test_command": "npm test" } }
 }
 ```
 
-- Use the same model name as the chat window if you want the same model and cost level. Per-platform: `platforms.claude.model`, `platforms.cursor.model`. A single dispatch can also override it ("use model X for this stage").
-- Find valid names for the Copilot CLI by running `copilot` and using `/model`. A wrong name fails immediately with "Model ... is not available" and costs nothing. Names are not shared between tools.
-- Check what a dispatch actually used: the newest `process-*.log` in `~/.copilot/logs` contains `Using default model: ...` or the pinned model.
-- Dispatched sessions are billed on their own, separately from chat messages. A session that explores a repo costs far more than a one-line reply, so try the pipeline on one small story first.
+## Troubleshooting
 
-## Where things live
-
-Everything is in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
-
-| Path | Contents |
+| Symptom | Cause and fix |
 |---|---|
-| `workflow.db` | Tasks, transitions, artifacts (`stage_artifacts` table), edge cases, approvals |
-| `policy.json` | Stage rules, approval gates, retry limits |
-| `config.json` | Platform routing, registered repos (`projects`), custom platforms |
-| `dispatches/` | One folder per dispatched session: prompt, raw output, status |
-| `backups/` | Daily copy of `workflow.db`, newest 14 kept |
+| Agent says it has no tools / can't find the orchestrator | Reload the window, open "MCP: List Servers", start the four servers. Start a **new** chat after changing the prompt (old chats keep the old one) |
+| "GitHub Copilot CLI was not found" or `UnsupportedWindowsCommandValue` | The Copilot CLI isn't installed, or only VS Code's `copilot-shim` is on PATH. Install it (`npm install -g @github/copilot`) and run `copilot` once. The dispatcher launches the real binary on Windows |
+| Worker session says "Skipped workspace MCP servers ... not trusted" | Harmless warning. Trust the folder in the CLI if the worker needs repo-level MCP servers |
+| Agent says "still running" and stops | Say `check status`. A stage takes 1 to 5 minutes |
+| A story is missing from "what's open?" | Check `node dist/cli.js tasks list`; make sure the repo is registered (`repos list`) |
+| `Model "x" is not available` | Fix the name in `config.json` (see `/model` in `copilot`) |
+| Dispatch failed for another reason | Read `~/.ai-sdlc-orchestrator/dispatches/<id>/meta.json` (`error`, `stderr_tail`, `output`) |
+| Changes to the code have no effect | Run `npm run build`, then reload your tool (the servers run from `dist/`) |
 
-## Using it
+## Development
 
-In your AI tool's chat, select the **orchestrator** agent and talk naturally ("hi", "what's open?", "work on D:/work/ProjectA: ..."). After each step every reply ends with numbered **Options** (confirm, revise, show, check status, run tests, cancel...). Reply with the number or the words.
+```
+npm run build     # compile to dist/
+npm test          # build + run the test suite
+```
 
-Dispatched sessions run through the CLI of the configured AI platform (for Copilot, the GitHub Copilot CLI must be installed and signed in). See `config/config.example.json` and `clients/README.md`.
+- `src/workflow-state/`: MCP server, policy, SQLite schema and all workflow rules.
+- `src/dispatch/`: MCP server, platform adapters (`platforms.ts`), process runner, prompt building.
+- `src/cli.ts`: the `install`, `repos` and `tasks` commands.
+- `orchestrator-agent/`: system prompt and skills (the skills run by dispatched sessions are injected into their prompt; the three the chat agent runs itself are embedded in its agent file at install time).
+- `clients/README.md`: manual registration steps, including Claude Desktop.
+
+The adapters for Claude Code and Cursor follow those tools' documented flags but have not been run against the real CLIs; the Copilot CLI adapter has.
