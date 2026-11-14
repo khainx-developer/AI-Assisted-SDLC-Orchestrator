@@ -1,0 +1,47 @@
+export const SCHEMA = `
+CREATE TABLE IF NOT EXISTS tasks (
+  task_id TEXT PRIMARY KEY,
+  project_root TEXT NOT NULL,
+  parent_task_id TEXT REFERENCES tasks(task_id),
+  title TEXT NOT NULL,
+  description TEXT,
+  source TEXT NOT NULL CHECK (source IN ('jira','adhoc')),
+  stage TEXT NOT NULL,
+  stage_entered_at TEXT NOT NULL,
+  flags_json TEXT NOT NULL,
+  linked_refs_json TEXT,
+  related_repos_json TEXT,
+  coordinated_release INTEGER DEFAULT 0,
+  needs_attention INTEGER DEFAULT 0,
+  retry_count INTEGER DEFAULT 0,
+  dispatch_id TEXT,
+  dispatch_status TEXT CHECK (dispatch_status IN ('in-flight','completed','failed')),
+  target_files_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_repo_stage ON tasks(project_root, stage);
+CREATE TABLE IF NOT EXISTS transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  from_stage TEXT, to_stage TEXT, reason TEXT, policy_version TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stage_artifacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  stage TEXT NOT NULL, version INTEGER NOT NULL, content TEXT NOT NULL,
+  input_refs_json TEXT, skill_version TEXT, platform TEXT, created_at TEXT NOT NULL,
+  UNIQUE(task_id, stage, version)
+);
+CREATE TABLE IF NOT EXISTS edge_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  description TEXT, decision TEXT, reasoning TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  stage TEXT NOT NULL, approved_by TEXT, created_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind UNINDEXED, task_id UNINDEXED, project_root UNINDEXED, stage UNINDEXED, text);
+`;

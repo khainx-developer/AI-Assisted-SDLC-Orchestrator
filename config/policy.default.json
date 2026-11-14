@@ -1,0 +1,25 @@
+{
+  "version": "1",
+  "stages": ["requirement", "design", "plan", "implementation", "test", "review", "done", "cancelled"],
+  "terminal_stages": ["done", "cancelled"],
+  "transitions": {
+    "requirement": ["design", "plan", "implementation", "cancelled"],
+    "design": ["requirement", "plan", "cancelled"],
+    "plan": ["design", "implementation", "cancelled"],
+    "implementation": ["test", "plan", "cancelled"],
+    "test": ["implementation", "review", "cancelled"],
+    "review": ["implementation", "done", "cancelled"],
+    "done": [],
+    "cancelled": []
+  },
+  "heavy_pipeline": ["requirement", "design", "plan"],
+  "light_start_stage": "implementation",
+  "heavy_start_stage": "requirement",
+  "requires_human_approval": [
+    { "stage": "plan", "when": "risky", "auto_approve_after_hours": null }
+  ],
+  "max_test_retries": 3,
+  "max_dispatch_retries": 2,
+  "sync_jira_status": false,
+  "jira_checkpoints": { "implementation": "In Progress", "review": "In Review", "done": "Done" }
+}

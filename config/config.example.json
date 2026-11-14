@@ -1,0 +1,19 @@
+{
+  "default_platform": "claude",
+  "analysis_platform": "claude",
+  "coding_platform": "copilot",
+  "dispatch_timeout_minutes": 30,
+  "projects": {
+    "D:/work/ProjectA": { "coding_platform": "cursor", "test_command": "npm test" }
+  },
+  "platforms": {
+    "claude":  { "model": "claude-sonnet-5-5" },
+    "copilot": { "extra_args": [] },
+    "cursor":  { "command": "cursor-agent" },
+    "mytool": {
+      "command": "mytool",
+      "args": ["run", "--mode", "{mode}", "--prompt-file", "{prompt_file}"],
+      "prompt_via": "file"
+    }
+  }
+}
