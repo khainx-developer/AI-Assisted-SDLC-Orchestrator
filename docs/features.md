@@ -21,7 +21,7 @@ A one-page map. Each line links to where it is explained.
 - **Precedent search:** SQLite FTS5 over past artifacts and edge cases. No embeddings or code index, with stated triggers for revisiting. Design §9.6, §9.8
 
 ## Platforms and safety
-- **Any AI platform** for hosting and for workers (Copilot, Claude Code, Cursor, custom), chosen independently, per mode or per repo, with the AI model settable per platform or per repo (`model set`). Design §5.4
+- **Any AI platform** for hosting and for workers (Copilot CLI, Claude Code, Cursor, custom), chosen independently, per mode or per repo, with the AI model settable per platform or per repo (`model set`). Design §5.4
 - **Read-only enforced twice:** by the platform CLI where possible, and by a git-status check after every analysis session. Design §5.2
 - **Resilience:** in-flight dispatch guard against double dispatch, lost-process detection, daily backups of `workflow.db` and `learnings/`. Design §5.1
 

@@ -1,6 +1,6 @@
 # AI-Assisted SDLC Orchestrator
 
-An **orchestrator agent** you chat with in GitHub Copilot (VS Code or CLI), Claude Code or Cursor. It takes a story (a Jira ticket or a plain description), decides how much process it needs, and drives it through **requirement → design → plan → implementation → test → review**. It keeps the state, stops for your approval on risky plans, and hands the actual analysis and coding to separate AI sessions so its own context stays small.
+An **orchestrator agent** you chat with in GitHub Copilot CLI, Claude Code or Cursor. It takes a story (a Jira ticket or a plain description), decides how much process it needs, and drives it through **requirement → design → plan → implementation → test → review**. It keeps the state, stops for your approval on risky plans, and hands the actual analysis and coding to separate AI sessions so its own context stays small.
 
 Documentation index: [docs/README.md](docs/README.md)
 
@@ -23,7 +23,7 @@ You ── chat ──> Orchestrator agent ──> workflow-state MCP  (tasks, s
 |---|---|
 | Node 22.5 or newer | Runs the servers (uses built-in `node:sqlite`, no native packages) |
 | Git | Coding sessions work on a `task/<id>` branch |
-| A chat tool with MCP support: VS Code + GitHub Copilot, Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
+| A chat tool with MCP support: Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
 | The CLI of the AI that does the dispatched work, installed **and signed in** | Copilot: `npm install -g @github/copilot`, then run `copilot` once. Claude: `claude`. Cursor: `cursor-agent` |
 | Optional: Atlassian (Jira) and GitHub MCP access | Lets the agent read tickets and find PRs. You sign in when your tool prompts |
 
@@ -35,12 +35,9 @@ npm install
 npm run build
 ```
 
-**2. Install the agent and register the servers** (pick your tool; `--repo` registers a repo, repeat it for several — nothing is written into the repo for copilot/cursor)
+**2. Install the agent and register the servers** (pick your tool; `--repo` registers a repo, repeat it for several — nothing is written into the repo for copilot-cli/cursor)
 ```
-# GitHub Copilot in VS Code (user agent + MCP; register repo for copilot dispatch)
-node dist/cli.js install --target copilot --repo D:/work/ProjectA
-
-# GitHub Copilot CLI (terminal; do this too if you use `copilot` in a terminal)
+# GitHub Copilot CLI (user agent + MCP; register repo for copilot dispatch)
 node dist/cli.js install --target copilot-cli --repo D:/work/ProjectA
 
 # Cursor IDE (~/.cursor agent + MCP; register repo for cursor-agent dispatch)
@@ -57,9 +54,9 @@ Other tools: `--target claude`, `--target all`. Add `--dry-run` first to preview
 ```
 Use the same model as your chat window. List valid names with `/model` inside `copilot`.
 
-**4. Reload VS Code** (Command Palette: "Developer: Reload Window"), then in the MCP servers list start `workflow-state`, `dispatch`, Atlassian and GitHub, and sign in to the last two when asked.
+**4. Start a new Copilot CLI session** so it loads the agent and MCP configuration.
 
-**5. Check it works.** Open chat, invoke the orchestrator (Copilot: pick **orchestrator**; Cursor: `@orchestrator-agent`), and say `hi`. You should get a list of what it can do. Then ask `which repos and AI platforms are set up?`
+**5. Check it works.** Start a Copilot CLI or Cursor session, invoke the orchestrator (Copilot CLI: select **orchestrator**; Cursor: `@orchestrator-agent`), and say `hi`. You should get a list of what it can do. Then ask `which repos and AI platforms are set up?`
 
 ### Important: the dispatched model is a separate setting
 
@@ -95,9 +92,8 @@ Run from this repo's folder. After `npm link` you can type `sdlc-orchestrator ..
 
 ```
 # install / refresh (re-run after editing orchestrator-agent/SYSTEM_PROMPT.md, then reload your tool)
-node dist/cli.js install --target copilot|copilot-cli|claude|cursor|all [options]
+node dist/cli.js install --target copilot-cli|claude|cursor|all [options]
 node dist/cli.js install --target cursor --repo D:/work/ProjectA               # Cursor: ~/.cursor agent+MCP; register repo (platform cursor)
-node dist/cli.js install --target copilot --repo D:/work/ProjectA              # GitHub Copilot: VS Code user agent+MCP; register repo (platform copilot)
 node dist/cli.js install --target copilot-cli --repo D:/work/ProjectA          # Copilot CLI: ~/.copilot agent+MCP; register repo (platform copilot)
 
 # repos the agent can offer when you don't name one
@@ -122,18 +118,17 @@ node dist/cli.js tasks show <task_id> --stage plan        # requirement | design
 node dist/cli.js tasks remove <task_id>                   # preview; add --yes to delete (--with-children for sub-tasks)
 ```
 
-Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--profile <name>` and `--insiders` (VS Code only), `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
+Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
 
-Install writes, per target (copilot / copilot-cli / cursor never modify the repo; `--repo` only updates orchestrator config):
+Install writes, per target (copilot-cli / cursor never modify the repo; `--repo` only updates orchestrator config):
 
 | Target | Agent file | MCP servers |
 |---|---|---|
-| `copilot` | VS Code user `prompts/orchestrator.agent.md`; `--repo` sets that project's `platform: copilot` | VS Code user `mcp.json` |
 | `copilot-cli` | `~/.copilot/agents/orchestrator.agent.md`; `--repo` sets `platform: copilot` | `~/.copilot/mcp-config.json` |
 | `claude` | `~/.claude/agents/orchestrator.md` | prints `claude mcp add` commands to run |
 | `cursor` | `~/.cursor/agents/orchestrator-agent.md` (`@orchestrator-agent`); `--repo` sets `platform: cursor` | `~/.cursor/mcp.json` |
 
-Existing MCP config files are merged, backed up as `.bak`, and comments inside them are not preserved. The VS Code chat and the Copilot CLI read **different** MCP config files, which is why `copilot` and `copilot-cli` are separate targets.
+Existing MCP config files are merged, backed up as `.bak`, and comments inside them are not preserved. `copilot-cli` is the supported Copilot installer target; `copilot` remains the dispatch platform identifier for Copilot CLI worker sessions.
 
 ## Configuration
 
@@ -159,7 +154,7 @@ Placeholders: `{key}` (Jira key, or the task id when there is none), `{jira_key}
 
 **Model per repo.** The model is normally set per platform (`platforms.<id>.model`), so every repo using that platform shares it. To give one repo its own, use `model set` (Commands) or `projects.<root>.model` in `config.json`. Precedence: a model named on a single dispatch, then the repo's `model`, then the platform's `model`, then the CLI's own default. The name must be valid for that repo's AI CLI; a repo whose analysis and coding run on different platforms should keep using the per-platform setting.
 
-Routing example: orchestrate from Copilot Chat, analysis on Claude, coding on Copilot, and a different tool for one repo:
+Routing example: orchestrate from Copilot CLI, analysis on Claude, coding on Copilot, and a different tool for one repo:
 ```json
 {
   "default_platform": "copilot",

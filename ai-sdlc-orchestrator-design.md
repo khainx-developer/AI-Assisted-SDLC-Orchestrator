@@ -14,7 +14,7 @@ The orchestrator never writes code itself, and it never does deep requirement/de
 ## 2. Goals
 
 - Decouple the workflow engine from any single editor/tool (VS Code, Claude Code CLI, Claude Desktop should all be able to drive it).
-- **Support multiple AI platforms (GitHub Copilot, Claude Code, Cursor, and any other CLI-driven agent) on both sides**: as the *host* that runs the orchestrator, and as the *worker* that executes dispatched analysis/coding sessions. Host and worker are chosen independently, and workers can differ per mode or per repo (§5.4).
+- **Support multiple AI platforms (Copilot CLI, Claude Code, Cursor, and any other CLI-driven agent) on both sides**: as the *host* that runs the orchestrator, and as the *worker* that executes dispatched analysis/coding sessions. Host and worker are chosen independently, and workers can differ per mode or per repo (§5.4).
 - Avoid re-litigating "should every task go through full brainstorm → requirement → plan → implementation → test → review" — route by task complexity instead.
 - Reuse existing repo-level coding agents/skills (`.github/agents`, `.github/skills`) without duplicating their logic in the orchestrator.
 - Accept a task from multiple entry sources (Jira ticket, ad-hoc description, resuming a pending task) through one consistent interface rather than separate one-off flows.
@@ -25,7 +25,7 @@ The orchestrator never writes code itself, and it never does deep requirement/de
 ## 3. Non-goals
 
 - Not tied to one AI vendor. No platform-specific logic exists outside the adapter layer (§5.4); the state server, policy, skills and artifacts are platform-neutral.
-- Not building a new chat UI. Reuse whatever MCP-capable client is already installed (Copilot Chat in VS Code, Claude Code CLI, Claude Desktop).
+- Not building a new chat UI. Reuse whatever MCP-capable client is already installed (Copilot CLI, Claude Code CLI, Claude Desktop).
 - Not replacing `.github/agents` / `.github/skills` in individual repos. Those stay as-is; the orchestrator calls into them.
 - Not trying to enumerate every possible edge case up front. The system is designed to start lean and grow rules from observed edge cases over time.
 - Not making Jira the source of truth for workflow stage. Jira status sync is one-way and best-effort (see §7.3); `workflow-state` stays authoritative.
@@ -35,7 +35,7 @@ The orchestrator never writes code itself, and it never does deep requirement/de
 
 ```
 ┌───────────────────────────────────────────┐
-│ MCP Client (Copilot / Claude Code / Cursor │
+│ MCP Client (Copilot CLI / Claude Code / Cursor │
 │ / Claude Desktop) — any MCP-capable host   │
 └───────────────────┬─────────────────────────┘
                      │
@@ -229,7 +229,7 @@ Design points:
 - **Skills are injected, not installed.** `dispatch_analysis_task` reads the stage skill's `SKILL.md` and embeds it in the prompt, so the same skill runs identically on every platform and `skill_version` (content hash) is computed in one place.
 - **Platform-neutral result contract.** Analysis sessions end with only the artifact. Coding sessions end with a fenced `sdlc-result` JSON block (`success`, `summary`, `needs_clarification`, `question`, `pr_number`) that the runner parses, so no platform needs a bespoke output format. If the block is missing, success is inferred from the exit code. `files_changed` comes from git, not from the model's claim.
 - **Prompt delivery degrades safely.** Argument-delivered prompts fall back to a prompt file on Windows `.cmd` shims, where multi-line arguments cannot be quoted safely.
-- **Routing.** Precedence: explicit `platform` argument, then `projects.<root>.{analysis,coding}_platform` / `platform`, then global `analysis_platform` / `coding_platform`, then `default_platform`. This allows e.g. orchestrating from Copilot Chat, analysis on Claude, coding on Cursor, or a different tool for one legacy repo.
+- **Routing.** Precedence: explicit `platform` argument, then `projects.<root>.{analysis,coding}_platform` / `platform`, then global `analysis_platform` / `coding_platform`, then `default_platform`. This allows e.g. orchestrating from Copilot CLI, analysis on Claude, coding on Cursor, or a different tool for one legacy repo.
 - **Host side is already neutral.** The orchestrator is MCP servers plus a Markdown system prompt, so any MCP host can run it (registration per client in `clients/README.md`). The platform hosting the orchestrator and the platforms doing the work are independent choices.
 - **Recorded.** Each artifact stores the `platform` that produced it, so quality differences between platforms are visible later.
 - **Adding a platform** is either a config-only entry (command + arg template with `{prompt}`, `{prompt_file}`, `{mode}`, `{model}`, `{project_root}`) or one adapter object in code.
@@ -495,7 +495,7 @@ A real index (symbols, call graph, embeddings) has the same staleness problem as
 ## 10. Installation / distribution model
 
 - Separate repository, e.g. `ai-sdlc-orchestrator`, independent of any project repo.
-- MCP servers (`workflow-state`, `dispatch`) registered at the **user/global level** (VS Code/Copilot, Claude Code, Cursor, Claude Desktop), not per-workspace. See `clients/README.md`.
+- MCP servers (`workflow-state`, `dispatch`) registered at the **user/global level** (Copilot CLI, Claude Code, Cursor, Claude Desktop), not per-workspace. See `clients/README.md`.
 - Runtime: Node 22.5+ with built-in `node:sqlite` (no native modules). Data dir `~/.ai-sdlc-orchestrator` (`SDLC_DATA_DIR`) holds `workflow.db`, `policy.json`, `config.json`, `learnings/`, `dispatches/`, `backups/`.
 - Each platform CLI used for dispatch (`claude`, `copilot`, `cursor-agent`, ...) must be installed and authenticated on the machine.
 - Jira v2 MCP and GitHub MCP registered the same way, credentials configured once.
@@ -518,7 +518,7 @@ ai-sdlc-orchestrator/
 ├── orchestrator-agent/
 │   ├── SYSTEM_PROMPT.md
 │   └── skills/           # triage-task, jira-intake, edge-case-review (8.2); requirement-analysis, task-breakdown, design-analysis, plan-creation (8.3)
-├── clients/README.md     # registering with Copilot, Claude Code, Cursor, Claude Desktop
+├── clients/README.md     # registering with Copilot CLI, Claude Code, Cursor, Claude Desktop
 └── ai-sdlc-orchestrator-design.md
 ```
 

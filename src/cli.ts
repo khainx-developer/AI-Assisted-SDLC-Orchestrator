@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * sdlc-orchestrator install --target <copilot|claude|cursor|all> [--scope user|repo] [--repo <path>] ...
+ * sdlc-orchestrator install --target <copilot-cli|claude|cursor|all> [--scope user|repo] [--repo <path>] ...
  * Writes the orchestrator agent/rule file and registers the two MCP servers for the chosen AI tool.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
@@ -11,18 +11,16 @@ import { dataDir } from "./common/paths.js";
 
 const HELP = `sdlc-orchestrator install [options]
 
-  --target <t>        copilot (VS Code) | copilot-cli (~/.copilot) | claude | cursor | all        (required)
+  --target <t>        copilot-cli (~/.copilot) | claude | cursor | all        (required)
   --mode <m>          global (default): agent + servers for all projects; repos named with --repo are
                       registered in the global config
                       repo: for claude only, also put the agent file inside each --repo
-                      (copilot, copilot-cli, cursor: always user-global; --repo only updates config.json)
+                      (copilot-cli, cursor: always user-global; --repo only updates config.json)
   --repo <path>       repository; repeat for several. Registered in ~/.ai-sdlc-orchestrator/config.json
   --platform <p>      default AI platform for dispatched work: claude | copilot | cursor | <custom id>
                       (copilot/copilot-cli/cursor + --repo: defaults each repo's platform unless you pass --platform)
   --analysis-platform <p>   platform for read-only analysis stages
   --coding-platform <p>     platform for coding sessions
-  --profile <name>    copilot only: VS Code profile folder name (default profile if omitted)
-  --insiders          copilot only: target VS Code Insiders
   --no-integrations   do not register/allow the Jira (Atlassian) and GitHub MCP servers
   --jira-server <name>    MCP server key for Jira (default com.atlassian/atlassian-mcp-server)
   --github-server <name>  MCP server key for GitHub (default io.github.github/github-mcp-server)
@@ -59,7 +57,8 @@ let repo: string | undefined;
 const dry = flag("dry-run");
 const fail = (m: string): never => { console.error(`error: ${m}\n\n${HELP}`); process.exit(1); };
 
-if (!target || !["copilot", "copilot-cli", "claude", "cursor", "all"].includes(target)) fail("--target must be copilot, copilot-cli, claude, cursor or all");
+if (target === "copilot") fail("--target copilot is not supported; use copilot-cli");
+if (!target || !["copilot-cli", "claude", "cursor", "all"].includes(target)) fail("--target must be copilot-cli, claude, cursor or all");
 if (!/^(global|user|repo)$/.test(modeRaw)) fail("--mode must be global or repo");
 if (scope === "repo" && !repoArgs.length) fail("--mode repo needs --repo <path>");
 for (const r of repoArgs) if (!existsSync(r)) fail(`repo path does not exist: ${r}`);
@@ -97,7 +96,7 @@ function write(file: string, content: string) {
   writeFileSync(file, content);
 }
 
-/** Parses JSON, tolerating // comment lines and trailing commas (VS Code style). Returns null if still unparseable. */
+/** Parses JSON, tolerating // comment lines and trailing commas. Returns null if still unparseable. */
 function readJsonc(file: string): { data: any; hadComments: boolean } | null {
   const raw = readFileSync(file, "utf8");
   try { return { data: JSON.parse(raw), hadComments: false }; } catch { /* try relaxed */ }
@@ -107,7 +106,7 @@ function readJsonc(file: string): { data: any; hadComments: boolean } | null {
   } catch { return null; }
 }
 
-function mergeMcp(file: string, key: "servers" | "mcpServers", withType: boolean, cli = false) {
+function mergeMcp(file: string, withType: boolean, cli = false) {
   const entries: Record<string, any> = Object.fromEntries(
     Object.entries(servers).map(([k, v]) => [k, cli ? { type: "local", ...v, tools: ["*"] } : withType ? { type: "stdio", ...v } : v])
   );
@@ -118,7 +117,7 @@ function mergeMcp(file: string, key: "servers" | "mcpServers", withType: boolean
   if (existsSync(file)) {
     const parsed = readJsonc(file);
     if (!parsed) {
-      console.log(`! ${file} is not valid JSON; left untouched. Add this under "${key}":\n${JSON.stringify(entries, null, 2)}`);
+      console.log(`! ${file} is not valid JSON; left untouched. Add this under "mcpServers":\n${JSON.stringify(entries, null, 2)}`);
       return;
     }
     cfg = parsed.data;
@@ -126,28 +125,10 @@ function mergeMcp(file: string, key: "servers" | "mcpServers", withType: boolean
     if (parsed.hadComments) console.log(`! ${file} contained comments; they are not preserved (original saved as ${file}.bak)`);
   }
   // integrations are only added when absent, so an existing (possibly customised) entry is never overwritten
-  const existing = cfg[key] ?? {};
+  const existing = cfg.mcpServers ?? {};
   const add = Object.fromEntries(Object.entries(extra).filter(([k]) => !(k in existing)));
-  cfg[key] = { ...existing, ...add, ...entries };
-  if (key === "servers" && !cfg.inputs && !cli) cfg.inputs = [];
+  cfg.mcpServers = { ...existing, ...add, ...entries };
   write(file, JSON.stringify(cfg, null, 2));
-}
-
-function vscodeUserDir() {
-  const app = flag("insiders") ? "Code - Insiders" : "Code";
-  const base = process.platform === "win32" ? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), app)
-    : process.platform === "darwin" ? join(homedir(), "Library", "Application Support", app)
-    : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), app);
-  return opt("profile") ? join(base, "User", "profiles", opt("profile")!) : join(base, "User");
-}
-
-function installCopilot() {
-  // Always user-global for GitHub Copilot in VS Code — never write into the repo.
-  // Agent + MCP live in the VS Code user folder so Copilot Chat can see them; --repo only updates config.json.
-  const agent = `---\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review across AI platforms.\ntools: [${["workflow-state/*", "dispatch/*", ...(integrations ? [`${jiraKey}/*`, `${githubKey}/*`] : [])].map((t) => `'${t}'`).join(", ")}]\n---\n${prompt}`;
-  const dir = vscodeUserDir();
-  write(join(dir, "prompts", "orchestrator.agent.md"), agent);
-  mergeMcp(join(dir, "mcp.json"), "servers", true);
 }
 
 function installCopilotCli() {
@@ -158,14 +139,14 @@ description: SDLC orchestrator. Triages tasks and drives requirement, design, pl
 ${prompt}`;
   const dir = join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"));
   write(join(dir, "agents", "orchestrator.agent.md"), agent);
-  mergeMcp(join(dir, "mcp-config.json"), "mcpServers", true, true);
+  mergeMcp(join(dir, "mcp-config.json"), true, true);
 }
 
 function installClaude() {
   const agent = `---\nname: orchestrator\ndescription: SDLC orchestrator. Use to start, resume or inspect tasks that move through requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
   if (scope === "repo") {
     write(join(repo!, ".claude", "agents", "orchestrator.md"), agent);
-    mergeMcp(join(repo!, ".mcp.json"), "mcpServers", false);
+    mergeMcp(join(repo!, ".mcp.json"), false);
     return;
   }
   write(join(homedir(), ".claude", "agents", "orchestrator.md"), agent);
@@ -176,7 +157,7 @@ function installClaude() {
 function installCursor() {
   // Always user-global: MCP in ~/.cursor/mcp.json, @orchestrator-agent in ~/.cursor/agents/.
   // --repo only registers the project in config.json (see writeConfig); nothing is written into the repo.
-  mergeMcp(join(homedir(), ".cursor", "mcp.json"), "mcpServers", false);
+  mergeMcp(join(homedir(), ".cursor", "mcp.json"), false);
   const agent = `---\nname: orchestrator-agent\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
   write(join(homedir(), ".cursor", "agents", "orchestrator-agent.md"), agent);
 }
@@ -185,7 +166,7 @@ function writeConfig() {
   const dp = opt("platform"), ap = opt("analysis-platform"), cp = opt("coding-platform"), tc = opt("test-command");
   // sole install target implies that platform for registered repos (copilot-cli → dispatch id "copilot")
   const sole = targets.length === 1 ? targets[0] : null;
-  const autoPlatform = !dp && (sole === "cursor" || sole === "copilot" || sole === "copilot-cli")
+  const autoPlatform = !dp && (sole === "cursor" || sole === "copilot-cli")
     ? (sole === "copilot-cli" ? "copilot" : sole)
     : undefined;
   if (!dp && !ap && !cp && !repoArgs.length) return;
@@ -207,11 +188,11 @@ function writeConfig() {
 }
 
 if (!existsSync(join(here, "dist", "workflow-state", "server.js"))) fail("project is not built; run `npm run build` first");
-const targets = target === "all" ? ["copilot", "copilot-cli", "claude", "cursor"] : [target!];
-const fns = { copilot: installCopilot, "copilot-cli": installCopilotCli, claude: installClaude, cursor: installCursor } as Record<string, () => void>;
-const userGlobalTargets = new Set(["copilot", "copilot-cli", "cursor"]);
+const targets = target === "all" ? ["copilot-cli", "claude", "cursor"] : [target!];
+const fns = { "copilot-cli": installCopilotCli, claude: installClaude, cursor: installCursor } as Record<string, () => void>;
+const userGlobalTargets = new Set(["copilot-cli", "cursor"]);
 for (const t of targets) {
-  // copilot / copilot-cli / cursor: always user-global; --repo is handled only by writeConfig
+  // copilot-cli / cursor: always user-global; --repo is handled only by writeConfig
   if (!userGlobalTargets.has(t) && scope === "repo") {
     for (const r of repoArgs) { repo = r; console.log(`\n== ${t} (repo: ${r}) ==`); fns[t](); }
   } else {
@@ -221,7 +202,7 @@ for (const t of targets) {
   }
 }
 writeConfig();
-console.log("\nDone. Reload the tool, then use the orchestrator (Claude Code: orchestrator subagent; Cursor: @orchestrator-agent; Copilot: orchestrator agent).");
+console.log("\nDone. Start a new session, then use the orchestrator (Claude Code: orchestrator subagent; Cursor: @orchestrator-agent; Copilot CLI: orchestrator agent).");
 
 function reposCommand(a: string[]) {
   const file = join(dataDir(), "config.json");
