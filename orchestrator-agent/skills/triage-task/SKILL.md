@@ -4,7 +4,7 @@ description: Orchestrator meta-skill. Computes the five triage flags consistentl
 ---
 # triage-task
 
-Run inline on every new task. Produce the flags object passed to `create_task`. Do not read the codebase deeply; use the task text, and a `search_precedent` call if useful. When unsure, pick the HEAVY value and say why in the task description.
+Run inline on every new task. Produce the flags object passed to `create_task`. Call `read_learnings(project_root)` first (once per task; skip if `jira-intake` already did): notes about how requests get phrased on this team (e.g. "'the dashboard' is ambiguous") affect `requirement_clarity`. Do not read the codebase deeply; use the task text, and a `search_precedent` call if useful. `files_affected` and `has_precedent` are therefore estimates from the text; `requirement-analysis` refines them. When unsure, pick the HEAVY value and say why in the task description.
 
 | Flag | Rule |
 |---|---|

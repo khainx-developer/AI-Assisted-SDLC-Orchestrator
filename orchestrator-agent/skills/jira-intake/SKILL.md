@@ -4,6 +4,7 @@ description: Orchestrator meta-skill. Maps a Jira issue into create_task fields.
 ---
 # jira-intake
 
+0. `read_learnings(project_root)` first. Notes about this ticketing system (e.g. "PROJ tickets never fill Acceptance Criteria") change how you read the ticket below.
 1. Fetch the issue with the Jira MCP.
 2. title = summary. description = description + the Acceptance Criteria field verbatim, if present.
 3. linked_refs = {"jira_key": "<KEY>"}.

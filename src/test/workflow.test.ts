@@ -113,3 +113,31 @@ test("delete_task removes everything; guards children and in-flight dispatches",
   assert.equal((wf.searchPrecedent("unique-zebra-term") as any[]).length, 0);
   assert.equal(wf.listPending("/del").length, 0);
 });
+
+test("branch name: default task/{key}; per-repo and global branch_pattern; bad patterns reported not thrown", async () => {
+  const { writeFileSync } = await import("node:fs");
+  const cfg = join(process.env.SDLC_DATA_DIR!, "config.json");
+  const prev = process.env.SDLC_CONFIG;
+  process.env.SDLC_CONFIG = cfg;
+  try {
+    const wf = new Workflow();
+    const mk = (root: string, jira?: string) =>
+      wf.createTask({ project_root: root, title: "b", source: jira ? "jira" : "adhoc", flags: light, linked_refs: jira ? { jira_key: jira } : {} });
+
+    writeFileSync(cfg, JSON.stringify({ default_platform: "x" }));
+    assert.equal(mk("/b1", "P-9").branch, "task/P-9");
+
+    writeFileSync(cfg, JSON.stringify({ default_platform: "x", branch_pattern: "dev/{key}", projects: { "/b2": { branch_pattern: "feature/{jira_key}" } } }));
+    assert.equal(mk("/b2", "P-9").branch, "feature/P-9");
+    assert.equal(mk("/b3", "P-9").branch, "dev/P-9");
+    const adhoc = mk("/b2");
+    assert.equal(adhoc.branch, `feature/${adhoc.task_id}`); // no Jira key: falls back to the task id
+
+    for (const bad of ["feature/{nope}", "fixed-name", "main", "{key}..x", "{key}/"]) {
+      writeFileSync(cfg, JSON.stringify({ default_platform: "x", branch_pattern: bad }));
+      const t = wf.getTask(adhoc.task_id);
+      assert.equal(t.branch, null, bad);
+      assert.match((t as any).branch_error, /branch_pattern/, bad);
+    }
+  } finally { if (prev === undefined) delete process.env.SDLC_CONFIG; else process.env.SDLC_CONFIG = prev; }
+});

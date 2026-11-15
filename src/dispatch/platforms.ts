@@ -79,7 +79,9 @@ const cursor: Platform = {
   id: "cursor", label: "Cursor Agent CLI", command: "cursor-agent", enforcesReadOnly: false, promptVia: "arg", supportsAddDir: false,
   build(req, ov, promptArg) {
     // Without --force, cursor-agent only proposes changes, which is its read-only mode.
-    const args = ["-p", promptArg, "--output-format", "text"];
+    // --trust is required for headless runs: otherwise the CLI exits asking for an interactive
+    // workspace-trust prompt (dispatch already chose project_root; no human is at that TTY).
+    const args = ["-p", promptArg, "--output-format", "text", "--trust"];
     if (req.model ?? ov.model) args.push("--model", (req.model ?? ov.model)!);
     if (req.mode === "coding") args.push("--force");
     return { command: ov.command ?? "cursor-agent", args: [...args, ...(ov.extra_args ?? [])] };

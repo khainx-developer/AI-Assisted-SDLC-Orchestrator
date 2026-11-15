@@ -55,6 +55,8 @@ test("every built-in platform builds a headless invocation; analysis is restrict
   assert.match(PLATFORMS.claude.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /disallowedTools Edit,Write/);
   assert.match(PLATFORMS.cursor.build({ ...base, mode: "coding" }, {}, "P").args.join(" "), /--force/);
   assert.doesNotMatch(PLATFORMS.cursor.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /--force/);
+  assert.match(PLATFORMS.cursor.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /--trust/);
+  assert.match(PLATFORMS.cursor.build({ ...base, mode: "coding" }, {}, "P").args.join(" "), /--trust/);
   assert.match(PLATFORMS.copilot.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /--add-dir \/other/);
 });
 
@@ -113,4 +115,12 @@ test("extractArtifact: markers, fences and raw text", async () => {
   assert.equal(extractArtifact(`/ Search foo\n${F}\nProblem: y\n${F}`), "Problem: y");
   assert.equal(extractArtifact(`<<<ARTIFACT\n${F}\nProblem: z\n${F}\nARTIFACT>>>`), "Problem: z");
   assert.equal(extractArtifact("Problem: plain"), "Problem: plain");
+});
+
+test("projectConfig matches a repo regardless of slash and drive-letter spelling", async () => {
+  const { projectConfig } = await import("../common/config.js");
+  writeFileSync(cfgPath, JSON.stringify({ default_platform: "fake", platforms: {}, projects: { "D:/work/Spell": { model: "m1" } } }));
+  assert.equal(projectConfig("d:/work/Spell/")?.model, "m1");
+  assert.equal(projectConfig("D:" + String.fromCharCode(92) + "work" + String.fromCharCode(92) + "Spell")?.model, "m1");
+  assert.equal(projectConfig("D:/work/Other"), undefined);
 });

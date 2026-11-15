@@ -110,6 +110,10 @@ Suggested tools:
 | `check_file_overlap(task_id, files)` | Other pending tasks on the same repo whose recorded files overlap (§5.2 concurrency check). |
 | `search_precedent(query, project_root?)` | FTS5 search over past artifacts and edge cases (§9.6). |
 | `get_policy()` | Current policy plus its version stamp. |
+| `read_learnings(project_root)` | Return the repo's learnings file plus the global one (§9.7). Used by the orchestrator at intake/triage; dispatch reads the same files directly (§5.2). |
+| `write_learning(note, project_root?, source_task_id?)` | Append a dated note to the repo's learnings file (or `_global.md` when `project_root` is omitted). Called only from `edge-case-review` or on a direct human instruction — never from dispatch output (§9.7). Refused at the note cap. |
+| `remove_learning(index, project_root?)` | Retire an outdated note by its 1-based position; needed when a file is at the cap. |
+| `list_zero_hit_searches(limit?)` | `search_precedent` queries that returned nothing — the observable signal for ever needing semantic search (§9.6). |
 
 **Storage: SQLite** (decided). A single file under the server's data directory — no database server needed at this scale, and SQLite's built-in FTS5 doubles as the artifact search mechanism (§9.6) without standing up anything extra. Minimal schema:
 
@@ -178,7 +182,7 @@ Flags, `linked_refs`, and `related_repos` stay as JSON columns rather than norma
 
 **Implementation notes worth getting right from the start, not retrofitted later:**
 - **Validate `update_policy` writes.** `policy.json` gets hand-edited a lot early on; a typo or a dropped required field shouldn't just sit there until some unrelated task's `transition_stage` call breaks on it later. Reject the write with a clear error if it fails schema validation — fail loud, at edit time, not quietly, at use time.
-- **Back up `workflow.db` on a schedule.** Once this file holds months of task history, artifacts, and edge cases, it's the system's only memory — a disk issue or accidental delete loses all of it. A daily copy to another location is enough; nothing fancy needed.
+- **Back up `workflow.db` and `learnings/` on a schedule.** Once these hold months of task history, artifacts, edge cases and learnings, they're the system's only memory — a disk issue or accidental delete loses all of it. A daily copy to another location is enough; nothing fancy needed.
 - **Dispatch calls need an in-flight status, not just a result.** If a session drops mid-`dispatch_coding_task` and the task is later picked up via `resume` (§7.1), the orchestrator needs to know a dispatch was already running before firing another one against the same branch — otherwise `resume` can double-dispatch. Track `dispatch_status` (in-flight / completed / failed) per task and check it before any retry or resume touches a task that was mid-dispatch.
 
 ### 5.2 `dispatch` MCP server (custom)
@@ -193,6 +197,10 @@ Suggested tools:
 | `run_tests(task_id, project_root)` | Run the repo's existing test command, structured pass/fail. |
 | `list_platforms()` | Built-in and custom platforms, and which is configured for analysis/coding. |
 | `get_dispatch_result(dispatch_id)` | Retrieve the result of a dispatch. Both dispatch tools return immediately with a `dispatch_id`; this is the only way results come back, polled by the orchestrator's runtime loop (§6.5b) rather than awaited synchronously. |
+
+**Context injected into every dispatch.** Like skills (§5.4), the dispatch server assembles this itself rather than relying on the orchestrator to paste it into `instructions` (which would cost orchestrator context and can be forgotten):
+- **Learnings** (§9.7): the repo's learnings file plus `_global.md`, read from the shared data dir. Applies to both analysis and coding dispatches.
+- **The repo's own instruction files** (`.github/agents`, `.github/skills`, `CLAUDE.md`, `.cursor/rules`, `AGENTS.md`) — for analysis dispatches too, not only coding. The session is already read-only in `project_root`, so nothing prevents it. Dispatch resolves and injects these explicitly, since only some platforms load them natively (`claude -p` reads `CLAUDE.md`; Copilot CLI and Cursor will not reliably load `.github/agents`). In analysis mode they are framed as *context only*: any "edit/write/run" directive inside them is to be ignored, with the git-status check below as the backstop.
 
 Keeping `dispatch_analysis_task` read-only is a deliberate safety/clarity boundary, enforced twice: natively where the platform CLI supports it (§5.4), and platform-neutrally by comparing `git status --porcelain` before and after the session. Any new change marks the dispatch `failed` with `read_only_violation` listing the paths, so a platform that cannot enforce read-only is still caught. The rationale: a requirement or plan session should never be able to accidentally modify code while "just exploring" the repo to inform its artifact.
 
@@ -212,7 +220,7 @@ Every platform-specific detail lives in one adapter per platform (`src/dispatch/
 |---|---|---|---|---|---|
 | `claude` | `claude -p --output-format json` | stdin | `--allowedTools Read,Grep,Glob,WebSearch,WebFetch` + `--disallowedTools Edit,Write,Bash,...` | `--permission-mode acceptEdits` | `--add-dir` |
 | `copilot` | `copilot -p` | argument | `--deny-tool write --deny-tool shell` | `--allow-all-tools` | `--add-dir` |
-| `cursor` | `cursor-agent -p` | argument | omit `--force` (proposes only; verified by the git check) | `--force` | named in prompt only |
+| `cursor` | `cursor-agent -p` | argument | omit `--force` (proposes only; verified by the git check); always `--trust` (headless workspace trust) | `--force` + `--trust` | named in prompt only |
 | any other | declared in `config.json` | `stdin` / `arg` / `file` | git check only | per config | named in prompt only |
 
 The flags above are defaults, not a guarantee: these CLIs change faster than this document, so each can be overridden or extended per platform with `command` / `extra_args` in `config.json`. They have not yet been exercised against the real CLIs (see §12).
@@ -261,7 +269,7 @@ When no policy rule matches the current state cleanly:
 
 ### 6.4 Branching convention
 
-Every task gets its own branch, derived from `task_id` or, when present, `linked_refs.jira_key` (e.g. `task/PROJ-123`, falling back to `task/<task_id>` for `adhoc` tasks). `dispatch_coding_task` always works on that branch, never directly on `main`/`master`. This gives two things for free:
+Every task gets its own branch, created automatically when coding starts. The name comes from `branch_pattern` in `config.json` (global, overridden per repo), default `task/{key}`, where `{key}` is `linked_refs.jira_key` when present and the `task_id` otherwise (e.g. `task/PROJ-123`, or `feature/PROJ-123` with `feature/{key}`). Placeholders: `{key}`, `{jira_key}`, `{task_id}`. A pattern with no placeholder, an unknown placeholder, or a result of `main`/`master` is rejected and reported as `branch_error` on the task instead of being used. The branch is created from whatever is checked out; a configurable base branch is not built. `dispatch_coding_task` always works on that branch, never directly on `main`/`master`. This gives two things for free:
 - **Rollback by default.** Before merge, "undo" is just discarding the branch — `reversible: false` in the triage flags is really about *post-merge* reversibility (can you cleanly revert after it ships), not about whether the work-in-progress itself is safe to throw away.
 - **A natural 1:1 mapping** task → branch → PR, which is what makes `linked_refs.pr_number` meaningful (§7.2) and what `run_tests`/CI should actually run against.
 
@@ -347,7 +355,9 @@ Three different kinds of "skill" are in play, and they should stay cleanly separ
 
 ### 8.1 Repo-level coding skills (already exist, unchanged)
 
-Each repo's own agent/skill conventions (`ProjectA`'s `.github/agents` and `.github/skills`, `CLAUDE.md`, `.cursor/rules`, `AGENTS.md`) — for the read+write coding session invoked via `dispatch_coding_task`. Which of these a session honours depends on the platform chosen for it. The orchestrator never reads their contents directly. Nothing to build here.
+Each repo's own agent/skill conventions (`ProjectA`'s `.github/agents` and `.github/skills`, `CLAUDE.md`, `.cursor/rules`, `AGENTS.md`) — for the read+write coding session invoked via `dispatch_coding_task`. Which of these a session honours depends on the platform chosen for it. The orchestrator itself never reads their contents; the dispatch server injects them into both coding and analysis sessions (§5.2), the latter as read-only context. Nothing to build in the repos.
+
+**Where durable knowledge lives.** Anything about the codebase itself (structure, conventions, deprecated modules, flaky tests) belongs in these repo files — committed, team-visible, naturally read by `dispatch_coding_task`. The orchestrator's own learnings (§9.7) are reserved for things with no natural home in the repo. When a dispatched session discovers a durable codebase fact that isn't written down anywhere, it flags it as a **suggested addition to the repo's instruction files** (artifact field, §9.1) rather than quietly stashing it in the orchestrator's private store.
 
 ### 8.2 Orchestrator-side meta-skills (control the pipeline itself)
 
@@ -357,7 +367,11 @@ Live in `ai-sdlc-orchestrator`, run by the orchestrator inline (cheap, no repo a
 |---|---|---|
 | `triage-task` | Every `create_task` | The fixed checklist for computing the 5 triage flags (§6.1) consistently. |
 | `jira-intake` | Every `jira` mode invocation | Field mapping from the Jira ticket into title/description/initial flags. |
-| `edge-case-review` | Periodic, run manually | Reading `record_edge_case` logs, spotting 3+ recurring patterns, drafting an `update_policy` patch. |
+| `edge-case-review` | Periodic, run manually | Reading `record_edge_case` logs, spotting 3+ recurring patterns, and routing each to one of three outputs: a hard routing rule → `update_policy` patch; a fact about the codebase → suggested addition to the repo's own instruction files; contextual knowledge with no repo home → `write_learning` (§9.7). Also prunes stale learnings. |
+
+Reading learnings (§9.7) is part of `jira-intake` and `triage-task`: ticketing-system quirks and request-phrasing patterns matter before any dispatch happens.
+
+> **Open gap — triage vs. repo access.** `triage-task` runs inline with no repo access, yet §6.1 asks for `files_affected` and `has_precedent`, which need the codebase. As built, they are rough estimates from the ticket text (the skill says so) that `requirement-analysis` later refines; the alternative is a small read-only analysis dispatch at `create_task`. Not settled (§13).
 
 ### 8.3 Stage-execution skills (produce the actual stage artifacts)
 
@@ -418,6 +432,12 @@ Children:
 (or explicitly: "No split — work fits one pass")
 ```
 
+**Common optional field on every analysis artifact**
+```
+Suggested repo-instruction additions: [...]   # durable codebase facts found but not written down in the repo's .github/agents / skills / CLAUDE.md
+```
+Analysis sessions are read-only and return only an artifact, so this field is the mechanism for surfacing such facts: visible, stored with the artifact, and committed to the repo by a human. The orchestrator never edits repo files.
+
 ### 9.2 Traceability
 
 `record_stage_artifact(task_id, stage, content, input_refs?)` — `input_refs` names exactly which prior artifact(s)/version(s) this one was built from (e.g. `plan` v2 built from `requirement` v1 + `design` v1). This makes it possible to answer "if the requirement changes, which downstream artifacts are now stale?" later, without guessing.
@@ -442,13 +462,41 @@ Two different "find something similar" needs come up in this system, and they ca
 
 **Finding precedent in past decisions** (stage artifacts and `record_edge_case` entries accumulated across tasks, growing over time and now across multiple repos via §6.7). This is the one place a retrieval need will plausibly grow: "has something like this requirement/design/edge-case come up before" is exactly the kind of query where exact keyword match degrades as the corpus grows and phrasing varies. Still, don't start with full RAG (embeddings + vector store) — start with **SQLite FTS5** over `stage_artifacts.content` and `edge_cases.description`/`reasoning` (free, already part of the SQLite decision in §5.1, no new infrastructure). Add a `search_precedent(query, project_root?)` tool on `workflow-state` backed by FTS5.
 
+**Learnings files** (§9.7) are a small per-repo corpus: plain file read, no search infrastructure at all.
+
+**Common revisit trigger across all three places** (codebase precedent, past artifacts/edge cases, learnings): keyword search demonstrably misses conceptually-similar-but-differently-worded matches often enough to matter. To make this observable rather than a guess, `search_precedent` logs each query and its hit count, so zero-hit queries can be reviewed.
+
 **When to actually revisit real RAG:** only if, after real usage, FTS5 keyword search demonstrably misses conceptually-similar-but-differently-worded past cases often enough to matter (a concrete, observable trigger — not a guess made now). At that point, the upgrade path is adding embeddings for `stage_artifacts`/`edge_cases` rows and a vector similarity query, layered on top of the same SQLite tables rather than a separate system. Until that trigger shows up, building it now would be solving a retrieval problem the corpus isn't big enough yet to have.
+
+### 9.7 Learnings (durable cross-task memory)
+
+**What it is.** Knowledge that outlives any single task. It is *not* task-specific data (that stays in SQLite `stage_artifacts`/`edge_cases`), *not* a routing rule (those go to `policy.json`), and *not* codebase knowledge (that goes in the repo's own instruction files, §8.1). What remains is only what has no natural home in the repo:
+- ticketing-system quirks ("PROJ tickets never fill Acceptance Criteria"),
+- cross-repo process habits ("this team always squash-merges"),
+- patterns in how requests get phrased ("'the dashboard' is ambiguous for this team").
+
+**Storage.** One markdown file per repo (`learnings/<slug>.md`) plus one global file (`learnings/_global.md`) in the orchestrator's data dir. `<slug>` is `projects.<root>.slug` from `config.json` when set (so moving a repo doesn't orphan its notes), otherwise `<folder-name>-<6-char hash of the normalised path>`, so two repos both called `api` never share a file. Two small tools on `workflow-state` (`read_learnings`, `write_learning`, §5.1) — not a separate MCP server. The files are plain markdown and can be hand-edited; the tools are a convenience. Included in the daily backup (§5.1).
+
+**Written by:** `edge-case-review` promoting a recurring pattern that is contextual knowledge rather than a hard rule, or a human directly telling the orchestrator to remember something. **Never auto-written from dispatch output**: a hostile ticket or file could otherwise plant text that is injected into every later dispatch.
+
+**Read by:** `jira-intake` / `triage-task` at intake, and the dispatch server before every analysis *and* coding dispatch for that repo (§5.2).
+
+**Hygiene.**
+- Each note carries a date and its source `task_id`. Learnings go stale like any index (a team changes its process); `edge-case-review` reviews and prunes them.
+- The file is always injected, so it has a size cap (about 20 notes); at the cap, a new note means retiring an old one.
+- Calibration bar: a note earns its place only if it would matter to the next several tasks on that repo — not every one-off observation.
+
+### 9.8 Code index / codemap — decided not to build
+
+A real index (symbols, call graph, embeddings) has the same staleness problem as RAG: it needs continuous invalidation as code changes or it actively misleads. Structural overview content ("API layer lives here, services call that, no ORM") is codebase knowledge and belongs in the repo's own instruction files (§8.1), not in learnings and not in an index.
+
+**Trigger to revisit:** `dispatch_analysis_task` sessions keep burning disproportionate time just *locating* things rather than reasoning, even with decent repo instructions in place. To observe this, `duration_ms` is recorded in each dispatch's `meta.json` (tool-call counts aren't reported uniformly across platforms, so they aren't recorded).
 
 ## 10. Installation / distribution model
 
 - Separate repository, e.g. `ai-sdlc-orchestrator`, independent of any project repo.
 - MCP servers (`workflow-state`, `dispatch`) registered at the **user/global level** (VS Code/Copilot, Claude Code, Cursor, Claude Desktop), not per-workspace. See `clients/README.md`.
-- Runtime: Node 22.5+ with built-in `node:sqlite` (no native modules). Data dir `~/.ai-sdlc-orchestrator` (`SDLC_DATA_DIR`) holds `workflow.db`, `policy.json`, `config.json`, `dispatches/`, `backups/`.
+- Runtime: Node 22.5+ with built-in `node:sqlite` (no native modules). Data dir `~/.ai-sdlc-orchestrator` (`SDLC_DATA_DIR`) holds `workflow.db`, `policy.json`, `config.json`, `learnings/`, `dispatches/`, `backups/`.
 - Each platform CLI used for dispatch (`claude`, `copilot`, `cursor-agent`, ...) must be installed and authenticated on the machine.
 - Jira v2 MCP and GitHub MCP registered the same way, credentials configured once.
 - Every project-specific tool call takes `project_root` explicitly, so one running server instance serves multiple repos.
@@ -461,8 +509,8 @@ Two different "find something similar" needs come up in this system, and they ca
 ai-sdlc-orchestrator/
 ├── src/
 │   ├── workflow-state/   # server.ts (MCP tools), service.ts (all logic), policy.ts (zod-validated), schema.ts (SQLite + FTS5)
-│   ├── dispatch/         # server.ts, platforms.ts (adapters, §5.4), runner.ts (spawn/track/git checks), prompt.ts (skill injection, result parsing)
-│   ├── common/           # config.ts, paths.ts
+│   ├── dispatch/         # server.ts, platforms.ts (adapters, §5.4), runner.ts (spawn/track/git checks), prompt.ts (skill/learnings/repo-instruction injection, result parsing), repo-instructions.ts (§5.2)
+│   ├── common/           # config.ts, paths.ts, learnings.ts (§9.7)
 │   └── test/             # node:test suites for both servers
 ├── config/
 │   ├── policy.default.json   # copied to <data dir>/policy.json on first run
@@ -476,7 +524,7 @@ ai-sdlc-orchestrator/
 
 ## 12. Build order (suggested) and status
 
-**Built and unit-tested (steps 1, 3-7 in code, 11 and 12 in the server):** workflow-state server (policy validation, gates incl. auto-approve, heavy-pipeline enforcement, retry cap, in-flight guard, coordinated release, FTS5 search, daily backup), dispatch server with claude/copilot/cursor/custom adapters, read-only verification, branch handling, skills and system prompt. Tests use a fake CLI; **the real `claude`, `copilot` and `cursor-agent` flag sets in §5.4 have not been run against the actual tools yet.** Do that first on a throwaway repo (step 2) and adjust `extra_args` as needed. Not built: GitHub/Jira wiring (reused MCP servers, configured in the client), the polling loop itself (the host calls `check_gates` and `get_dispatch_result` per the system prompt), Jira status sync.
+**Built and unit-tested (steps 1, 3-7 in code, 11 and 12 in the server, plus learnings §9.7, repo-instruction/learnings injection §5.2, zero-hit search log §9.6, `duration_ms` and learnings backup):** workflow-state server (policy validation, gates incl. auto-approve, heavy-pipeline enforcement, retry cap, in-flight guard, coordinated release, FTS5 search, daily backup), dispatch server with claude/copilot/cursor/custom adapters, read-only verification, branch handling, skills and system prompt. Tests use a fake CLI; **the real `claude`, `copilot` and `cursor-agent` flag sets in §5.4 have not been run against the actual tools yet.** Do that first on a throwaway repo (step 2) and adjust `extra_args` as needed. Not built: GitHub/Jira wiring (reused MCP servers, configured in the client), the polling loop itself (the host calls `check_gates` and `get_dispatch_result` per the system prompt), Jira status sync.
 
 0. **Validate the artifact templates by hand, before writing any code.** Manually walk 2–3 real `ProjectA` tickets through the requirement → design → plan templates (§9.1) yourself, in a plain doc. This is the cheapest way to discover a template is missing a field, or that a principle like "one recommended approach, not a menu" (§8.3) doesn't actually fit how your tickets look — far cheaper to fix on paper than after the skills and schema are built around the wrong shape.
 1. `workflow-state` MCP server with minimal policy + artifact storage (versioned, with `input_refs`) — highest-value, most durable piece.
@@ -500,6 +548,9 @@ ai-sdlc-orchestrator/
 - Whether `task-breakdown` should run automatically as part of triage, or only on request — leaning toward "only on request" initially, since over-splitting is as costly as never splitting; revisit once `edge-case-review` shows a pattern either way.
 - **Cost/token budget per stage.** Not built yet — worth a `max_tokens_per_stage` or similar guardrail once real usage shows which stage (likely `design-analysis` or `plan-creation`, since those explore the repo) is prone to running long, rather than guessing a limit up front.
 - **Real RAG (embeddings/vector search) over past artifacts** — deferred until FTS5 (§9.6) demonstrably falls short; not a decision to make speculatively now.
+- **Code index / codemap** — not built (§9.8); revisit only if analysis sessions spend disproportionate time locating code.
+- **Triage vs. repo access** (§8.2) — whether `files_affected` / `has_precedent` are ticket-text estimates refined later, or come from a small analysis dispatch at `create_task`.
+- **Learnings visibility** (§9.7) — they live in a per-machine data dir, so they are not team-visible. Fine for a personal install; revisit if the orchestrator is shared across teammates.
 - **Polling interval and `auto_approve_after_hours` defaults** (§6.5, §6.5b) — pick an actual number once you see how long a `plan-creation` or `dispatch_coding_task` run typically takes in practice; guessing a tick interval or timeout now risks being either too chatty or too slow to feel responsive.
 
-**Decided, no longer open:** multi-platform support through an adapter layer with injected skills and a platform-neutral result contract (§5.4); runtime is Node 22.5+ with built-in `node:sqlite`; state storage is SQLite (§5.1, schema included); multi-repo support is handled via `related_repos`/`additional_read_roots` for read-only cross-repo context and `task-breakdown` + `coordinated_release` for genuinely multi-write changes (§6.7); artifact search starts with SQLite FTS5, not a vector store (§9.6); the orchestrator runs as **one long-lived process using polling** rather than on-demand/synchronous (§6.5b), with approval gates supporting an **auto-approve timeout** so that long-lived run never stalls indefinitely on an unattended task (§6.5).
+**Decided, no longer open:** multi-platform support through an adapter layer with injected skills and a platform-neutral result contract (§5.4); runtime is Node 22.5+ with built-in `node:sqlite`; state storage is SQLite (§5.1, schema included); multi-repo support is handled via `related_repos`/`additional_read_roots` for read-only cross-repo context and `task-breakdown` + `coordinated_release` for genuinely multi-write changes (§6.7); artifact search starts with SQLite FTS5, not a vector store (§9.6); learnings are plain per-repo markdown files, narrowed to non-codebase knowledge, with codebase facts routed to the repo's own instruction files (§8.1, §9.7); no codemap (§9.8); the orchestrator runs as **one long-lived process using polling** rather than on-demand/synchronous (§6.5b), with approval gates supporting an **auto-approve timeout** so that long-lived run never stalls indefinitely on an unattended task (§6.5).

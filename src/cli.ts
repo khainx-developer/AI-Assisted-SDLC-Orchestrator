@@ -14,9 +14,11 @@ const HELP = `sdlc-orchestrator install [options]
   --target <t>        copilot (VS Code) | copilot-cli (~/.copilot) | claude | cursor | all        (required)
   --mode <m>          global (default): agent + servers for all projects; repos named with --repo are
                       registered in the global config
-                      repo: also put the agent file inside each --repo (servers stay global)
-  --repo <path>       repository; repeat for several. Registered globally (default) or, with --mode repo, also given its own agent file
+                      repo: for claude only, also put the agent file inside each --repo
+                      (copilot, copilot-cli, cursor: always user-global; --repo only updates config.json)
+  --repo <path>       repository; repeat for several. Registered in ~/.ai-sdlc-orchestrator/config.json
   --platform <p>      default AI platform for dispatched work: claude | copilot | cursor | <custom id>
+                      (copilot/copilot-cli/cursor + --repo: defaults each repo's platform unless you pass --platform)
   --analysis-platform <p>   platform for read-only analysis stages
   --coding-platform <p>     platform for coding sessions
   --profile <name>    copilot only: VS Code profile folder name (default profile if omitted)
@@ -24,17 +26,24 @@ const HELP = `sdlc-orchestrator install [options]
   --no-integrations   do not register/allow the Jira (Atlassian) and GitHub MCP servers
   --jira-server <name>    MCP server key for Jira (default com.atlassian/atlassian-mcp-server)
   --github-server <name>  MCP server key for GitHub (default io.github.github/github-mcp-server)
-  --mcp-in-repo       copilot + --repo: write .vscode/mcp.json in the repo instead of the user mcp.json
-  --test-command <c>  global mode: test command to record for the registered repo(s)
+  --test-command <c>  test command to record for the registered repo(s)
   --dry-run           show what would be written, change nothing
   -h, --help
 
 sdlc-orchestrator repos list | add <path>... | remove <path>...   manage registered repos in the global config
+sdlc-orchestrator model show [--repo <path>]                        AI model per repo (overrides the platform's model; a one-off model on a dispatch overrides both)
+sdlc-orchestrator model set <name> --repo <path>                   model name as the repo's AI CLI expects it
+sdlc-orchestrator model reset --repo <path>
+sdlc-orchestrator branch show [--repo <path>]                      branch naming pattern in effect (default task/{key})
+sdlc-orchestrator branch set <pattern> [--repo <path>]             e.g. feature/{key}; without --repo sets the global pattern
+sdlc-orchestrator branch reset [--repo <path>]                     back to the default (or the global pattern, for a repo)
 `;
 
 const argv = process.argv.slice(2);
 if (argv[0] === "tasks") { await tasksCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] === "repos") { reposCommand(argv.slice(1)); process.exit(0); }
+if (argv[0] === "model") { modelCommand(argv.slice(1)); process.exit(0); }
+if (argv[0] === "branch") { await branchCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] !== "install" || argv.includes("-h") || argv.includes("--help")) {
   console.log(HELP);
   process.exit(argv[0] === "install" || argv.length === 0 ? 0 : 1);
@@ -124,31 +133,31 @@ function mergeMcp(file: string, key: "servers" | "mcpServers", withType: boolean
   write(file, JSON.stringify(cfg, null, 2));
 }
 
-function installCopilot() {
-  const agent = `---\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review across AI platforms.\ntools: [${["workflow-state/*", "dispatch/*", ...(integrations ? [`${jiraKey}/*`, `${githubKey}/*`] : [])].map((t) => `'${t}'`).join(", ")}]\n---\n${prompt}`;
+function vscodeUserDir() {
   const app = flag("insiders") ? "Code - Insiders" : "Code";
   const base = process.platform === "win32" ? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), app)
     : process.platform === "darwin" ? join(homedir(), "Library", "Application Support", app)
     : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), app);
-  const dir = opt("profile") ? join(base, "User", "profiles", opt("profile")!) : join(base, "User");
-  if (scope === "repo") {
-    write(join(repo!, ".github", "agents", "orchestrator.agent.md"), agent);
-    // Servers hold machine-specific paths and sign-ins, so they go in the VS Code user config unless asked otherwise.
-    mergeMcp(flag("mcp-in-repo") ? join(repo!, ".vscode", "mcp.json") : join(dir, "mcp.json"), "servers", true);
-    return;
-  }
+  return opt("profile") ? join(base, "User", "profiles", opt("profile")!) : join(base, "User");
+}
+
+function installCopilot() {
+  // Always user-global for GitHub Copilot in VS Code — never write into the repo.
+  // Agent + MCP live in the VS Code user folder so Copilot Chat can see them; --repo only updates config.json.
+  const agent = `---\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review across AI platforms.\ntools: [${["workflow-state/*", "dispatch/*", ...(integrations ? [`${jiraKey}/*`, `${githubKey}/*`] : [])].map((t) => `'${t}'`).join(", ")}]\n---\n${prompt}`;
+  const dir = vscodeUserDir();
   write(join(dir, "prompts", "orchestrator.agent.md"), agent);
   mergeMcp(join(dir, "mcp.json"), "servers", true);
 }
 
 function installCopilotCli() {
+  // Always user-global under ~/.copilot — never write into the repo. --repo only updates config.json.
   const agent = `---
 description: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review across AI platforms.
 ---
 ${prompt}`;
   const dir = join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"));
-  // servers always live in ~/.copilot/mcp-config.json; repo mode additionally puts the agent file in the repo
-  write(scope === "repo" ? join(repo!, ".github", "agents", "orchestrator.agent.md") : join(dir, "agents", "orchestrator.agent.md"), agent);
+  write(join(dir, "agents", "orchestrator.agent.md"), agent);
   mergeMcp(join(dir, "mcp-config.json"), "mcpServers", true, true);
 }
 
@@ -165,25 +174,31 @@ function installClaude() {
 }
 
 function installCursor() {
-  const rule = `---\ndescription: SDLC orchestrator workflow. Apply when starting, resuming or inspecting a tracked task.\nalwaysApply: false\n---\n${prompt}`;
-  if (scope === "repo") {
-    write(join(repo!, ".cursor", "rules", "orchestrator.mdc"), rule);
-    mergeMcp(join(repo!, ".cursor", "mcp.json"), "mcpServers", false);
-    return;
-  }
+  // Always user-global: MCP in ~/.cursor/mcp.json, @orchestrator-agent in ~/.cursor/agents/.
+  // --repo only registers the project in config.json (see writeConfig); nothing is written into the repo.
   mergeMcp(join(homedir(), ".cursor", "mcp.json"), "mcpServers", false);
-  console.log(`Cursor has no file-based user rules; for every project, paste ${join(here, "orchestrator-agent", "SYSTEM_PROMPT.md")} into Cursor Settings > Rules, or re-run with --repo <path>.`);
+  const agent = `---\nname: orchestrator-agent\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
+  write(join(homedir(), ".cursor", "agents", "orchestrator-agent.md"), agent);
 }
 
 function writeConfig() {
   const dp = opt("platform"), ap = opt("analysis-platform"), cp = opt("coding-platform"), tc = opt("test-command");
+  // sole install target implies that platform for registered repos (copilot-cli → dispatch id "copilot")
+  const sole = targets.length === 1 ? targets[0] : null;
+  const autoPlatform = !dp && (sole === "cursor" || sole === "copilot" || sole === "copilot-cli")
+    ? (sole === "copilot-cli" ? "copilot" : sole)
+    : undefined;
   if (!dp && !ap && !cp && !repoArgs.length) return;
   const file = join(dataDir(), "config.json");
   const cfg = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { default_platform: "claude", platforms: {} };
   for (const r of repoArgs) {
     cfg.projects = cfg.projects ?? {};
-    cfg.projects[fwd(r)] = { ...(cfg.projects[fwd(r)] ?? {}), ...(tc ? { test_command: tc } : {}) };
-    console.log(`registered repo ${fwd(r)}`);
+    cfg.projects[fwd(r)] = {
+      ...(cfg.projects[fwd(r)] ?? {}),
+      ...(tc ? { test_command: tc } : {}),
+      ...(autoPlatform ? { platform: autoPlatform } : {}),
+    };
+    console.log(`registered repo ${fwd(r)}${autoPlatform ? ` (platform: ${autoPlatform})` : ""}`);
   }
   if (dp) cfg.default_platform = dp;
   if (ap) cfg.analysis_platform = ap;
@@ -194,16 +209,19 @@ function writeConfig() {
 if (!existsSync(join(here, "dist", "workflow-state", "server.js"))) fail("project is not built; run `npm run build` first");
 const targets = target === "all" ? ["copilot", "copilot-cli", "claude", "cursor"] : [target!];
 const fns = { copilot: installCopilot, "copilot-cli": installCopilotCli, claude: installClaude, cursor: installCursor } as Record<string, () => void>;
+const userGlobalTargets = new Set(["copilot", "copilot-cli", "cursor"]);
 for (const t of targets) {
-  if (scope === "repo") {
+  // copilot / copilot-cli / cursor: always user-global; --repo is handled only by writeConfig
+  if (!userGlobalTargets.has(t) && scope === "repo") {
     for (const r of repoArgs) { repo = r; console.log(`\n== ${t} (repo: ${r}) ==`); fns[t](); }
   } else {
     console.log(`\n== ${t} (global) ==`);
+    repo = undefined;
     fns[t]();
   }
 }
 writeConfig();
-console.log("\nDone. Restart/reload the tool, then select the 'orchestrator' agent (Claude Code: ask for the orchestrator subagent; Cursor: mention the rule).");
+console.log("\nDone. Reload the tool, then use the orchestrator (Claude Code: orchestrator subagent; Cursor: @orchestrator-agent; Copilot: orchestrator agent).");
 
 function reposCommand(a: string[]) {
   const file = join(dataDir(), "config.json");
@@ -223,6 +241,87 @@ function reposCommand(a: string[]) {
   if (sub !== "list") writeFileSync(file, JSON.stringify(cfg, null, 2));
   const keys = Object.keys(cfg.projects);
   console.log(keys.length ? keys.join("\n") : "(no repos registered)");
+}
+
+function modelCommand(a: string[]) {
+  const file = join(dataDir(), "config.json");
+  const cfg = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { default_platform: "claude", platforms: {} };
+  const [sub, ...rest] = a;
+  const ri = rest.indexOf("--repo");
+  const repoArg = ri >= 0 ? rest[ri + 1] : undefined;
+  if (ri >= 0 && !repoArg) { console.error("--repo needs a path"); process.exit(1); }
+  const key = repoArg ? fwd(resolve(repoArg)) : undefined;
+  const platformOf = (v: any) => v?.platform ?? v?.coding_platform ?? v?.analysis_platform ?? cfg.coding_platform ?? cfg.default_platform;
+  if (sub === "show") {
+    console.log("platform models (platforms.<id>.model):");
+    for (const [id, p] of Object.entries<any>(cfg.platforms ?? {})) console.log(`  ${id}: ${p?.model ?? "(CLI default)"}`);
+    const rows = Object.entries<any>(cfg.projects ?? {}).filter(([k]) => !key || k === key);
+    for (const [k, v] of rows) console.log(`${k}: ${v?.model ?? `(platform default, ${platformOf(v)}: ${cfg.platforms?.[platformOf(v)]?.model ?? "CLI default"})`}`);
+    return;
+  }
+  if (sub === "set") {
+    const name = rest.filter((_, i) => ri < 0 || (i !== ri && i !== ri + 1))[0];
+    if (!name || !key) { console.error("usage: model set <name> --repo <path>"); process.exit(1); }
+    cfg.projects = cfg.projects ?? {};
+    cfg.projects[key] = { ...(cfg.projects[key] ?? {}), model: name };
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+    console.log(`${key}: model set to ${name}. A wrong name fails instantly at no cost. Reload your tool so the servers reread config.json.`);
+    return;
+  }
+  if (sub === "reset") {
+    if (!key) { console.error("usage: model reset --repo <path>"); process.exit(1); }
+    if (cfg.projects?.[key]) delete cfg.projects[key].model;
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+    console.log(`${key}: model reset to the platform's model.`);
+    return;
+  }
+  console.error("usage: model show | set <name> --repo <path> | reset --repo <path>");
+  process.exit(1);
+}
+
+async function branchCommand(a: string[]) {
+  const { branchName, DEFAULT_BRANCH_PATTERN } = await import("./common/config.js");
+  const file = join(dataDir(), "config.json");
+  const cfg = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { default_platform: "claude", platforms: {} };
+  const [sub, ...rest] = a;
+  const ri = rest.indexOf("--repo");
+  const repoArg = ri >= 0 ? rest[ri + 1] : undefined;
+  if (ri >= 0 && !repoArg) { console.error("--repo needs a path"); process.exit(1); }
+  const positional = rest.filter((_, i) => i !== ri && i !== ri + 1 || ri < 0);
+  const repoKey = repoArg ? fwd(resolve(repoArg)) : undefined;
+  const sample = (root: string, pattern: string) => {
+    const jira = branchName({ task_id: "task_ab12cd34", project_root: root, linked_refs: { jira_key: "PROJ-123" } }, pattern);
+    const adhoc = branchName({ task_id: "task_ab12cd34", project_root: root }, pattern);
+    return `${jira}   (no Jira key: ${adhoc})`;
+  };
+  if (sub === "show") {
+    const global = cfg.branch_pattern ?? DEFAULT_BRANCH_PATTERN;
+    console.log(`global: ${global}${cfg.branch_pattern ? "" : "  (default)"}
+  e.g. ${sample("/repo", global)}`);
+    const rows = Object.entries<any>(cfg.projects ?? {}).filter(([k, v]) => v?.branch_pattern && (!repoKey || k === repoKey));
+    for (const [k, v] of rows) console.log(`${k}: ${v.branch_pattern}
+  e.g. ${sample(k, v.branch_pattern)}`);
+    if (repoKey && !rows.length) console.log(`${repoKey}: no override, uses the global pattern`);
+    return;
+  }
+  if (sub === "set") {
+    const pattern = positional[0];
+    if (!pattern) { console.error("usage: branch set <pattern> [--repo <path>]"); process.exit(1); }
+    try { console.log(`e.g. ${sample(repoKey ?? "/repo", pattern)}`); } catch (e: any) { console.error(`error: ${e.message}`); process.exit(1); }
+    if (repoKey) { cfg.projects = cfg.projects ?? {}; cfg.projects[repoKey] = { ...(cfg.projects[repoKey] ?? {}), branch_pattern: pattern }; }
+    else cfg.branch_pattern = pattern;
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+    console.log(`${repoKey ?? "global"} branch pattern set to ${pattern}. Reload your tool so the servers reread config.json.`);
+    return;
+  }
+  if (sub === "reset") {
+    if (repoKey) { if (cfg.projects?.[repoKey]) delete cfg.projects[repoKey].branch_pattern; } else delete cfg.branch_pattern;
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+    console.log(`${repoKey ?? "global"} branch pattern reset.`);
+    return;
+  }
+  console.error("usage: branch show | set <pattern> | reset  [--repo <path>]");
+  process.exit(1);
 }
 
 async function tasksCommand(a: string[]) {

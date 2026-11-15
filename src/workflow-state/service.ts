@@ -1,8 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import { dataDir } from "../common/paths.js";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { dataDir, normRoot } from "../common/paths.js";
+import { branchName } from "../common/config.js";
 import { loadPolicy, policyVersion, type Policy } from "./policy.js";
 import { SCHEMA } from "./schema.js";
 
@@ -19,12 +20,7 @@ const p = (s: any) => (s ? JSON.parse(s) : null);
 
 export class WorkflowError extends Error {}
 
-/** One spelling per repo: forward slashes, no trailing slash, upper-case drive letter. */
-export function normRoot(p: string): string {
-  let r = p.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  if (/^[a-z]:/.test(r)) r = r[0].toUpperCase() + r.slice(1);
-  return r;
-}
+export { normRoot };
 
 export class Workflow {
   db: DatabaseSync;
@@ -50,8 +46,8 @@ export class Workflow {
   static isRisky(f: Flags) {
     return f.breaking || !f.reversible;
   }
-  static branchFor(t: { task_id: string; linked_refs?: any }) {
-    return `task/${t.linked_refs?.jira_key ?? t.task_id}`;
+  static branchFor(t: { task_id: string; project_root: string; linked_refs?: any }) {
+    return branchName(t);
   }
 
   private row(task_id: string): any {
@@ -81,7 +77,10 @@ export class Workflow {
       created_at: r.created_at as string,
       updated_at: r.updated_at as string,
     };
-    return { ...t, branch: Workflow.branchFor(t) };
+    // a bad branch_pattern in config.json must not make every task unreadable: report it on the task instead
+    let branch: string | null = null, branch_error: string | undefined;
+    try { branch = Workflow.branchFor(t); } catch (e: any) { branch_error = e.message; }
+    return { ...t, branch, ...(branch_error ? { branch_error } : {}) };
   }
 
   createTask(a: {
@@ -320,9 +319,18 @@ export class Workflow {
       .map((w) => `"${w}"`)
       .join(" OR ");
     if (!q) return [];
+    const root = project_root ? normRoot(project_root) : null;
     const sql = `SELECT kind, task_id, stage, snippet(search_fts, 4, '[', ']', '...', 24) AS snippet FROM search_fts
       WHERE search_fts MATCH ? ${project_root ? "AND project_root = ?" : ""} ORDER BY rank LIMIT ?`;
-    return this.db.prepare(sql).all(...(project_root ? [q, normRoot(project_root), limit] : [q, limit]));
+    const rows = this.db.prepare(sql).all(...(root ? [q, root, limit] : [q, limit]));
+    // logged so zero-hit queries can be reviewed: the observable signal for ever needing semantic search (design 9.6)
+    this.db.prepare("INSERT INTO search_log (query,project_root,hits,created_at) VALUES (?,?,?,?)").run(query, root, rows.length, now());
+    return rows;
+  }
+
+  /** Queries that found nothing, newest first. */
+  zeroHitSearches(limit = 50) {
+    return this.db.prepare("SELECT query, project_root, created_at FROM search_log WHERE hits=0 ORDER BY id DESC LIMIT ?").all(limit);
   }
 
   /**
@@ -349,20 +357,26 @@ export class Workflow {
       }
       this.db.exec("COMMIT");
     } catch (e) { this.db.exec("ROLLBACK"); throw e; }
-    return { removed: ids, title: t.title, note: "git branch " + t.branch + " (if any) was NOT deleted" };
+    return { removed: ids, title: t.title, note: (t.branch ? `git branch ${t.branch} (if any)` : "its git branch (if any)") + " was NOT deleted" };
   }
 
   /** One copy per day, newest 14 kept. Cheap to call on every server start. */
   backup(retain = 14) {
     const dir = join(dataDir(), "backups");
     mkdirSync(dir, { recursive: true });
-    const target = join(dir, `workflow-${new Date().toISOString().slice(0, 10)}.db`);
+    const day = new Date().toISOString().slice(0, 10);
+    const target = join(dir, `workflow-${day}.db`);
     if (existsSync(target)) return target;
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     copyFileSync(this.file, target);
-    const files = readdirSync(dir).filter((f) => f.startsWith("workflow-")).sort();
-    for (const f of files.slice(0, Math.max(0, files.length - retain))) {
-      try { unlinkSync(join(dir, f)); } catch { /* best effort */ }
+    // learnings/ is small, hand-editable memory: back it up alongside the database
+    const lsrc = join(dataDir(), "learnings");
+    if (existsSync(lsrc)) cpSync(lsrc, join(dir, `learnings-${day}`), { recursive: true });
+    for (const prefix of ["workflow-", "learnings-"]) {
+      const files = readdirSync(dir).filter((f) => f.startsWith(prefix)).sort();
+      for (const f of files.slice(0, Math.max(0, files.length - retain))) {
+        try { rmSync(join(dir, f), { recursive: true, force: true }); } catch { /* best effort */ }
+      }
     }
     return target;
   }

@@ -11,6 +11,7 @@ Rules
 - Every step must be statable as "touch file X to do Y". If it cannot be, the plan is not done.
 - Include a test plan. Include rollback/revert notes only if the task is not reversible.
 - List all files touched across steps (the orchestrator uses this for overlap checks).
+- If you find a durable fact about the codebase (structure, convention, deprecated module, flaky test) that the repo's own instruction files do not mention, list it under "Suggested repo-instruction additions" so a human can commit it to the repo's .github/agents or CLAUDE.md. Omit the field if there is nothing. Never present it as a requirement or step.
 
 Output: only this template.
 
@@ -21,4 +22,5 @@ Steps:
 Files touched: [...]
 Test Plan: [...]
 Rollback/Revert notes: ... (only if reversible = false)
+Suggested repo-instruction additions: [...]   (optional)
 ```

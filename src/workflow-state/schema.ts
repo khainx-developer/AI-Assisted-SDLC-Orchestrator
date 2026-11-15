@@ -43,5 +43,9 @@ CREATE TABLE IF NOT EXISTS approvals (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
   stage TEXT NOT NULL, approved_by TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS search_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query TEXT NOT NULL, project_root TEXT, hits INTEGER NOT NULL, created_at TEXT NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind UNINDEXED, task_id UNINDEXED, project_root UNINDEXED, stage UNINDEXED, text);
 `;

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Workflow, WorkflowError } from "./service.js";
+import { readLearnings, writeLearning, removeLearning } from "../common/learnings.js";
 import { updatePolicy, policyVersion } from "./policy.js";
 
 const wf = new Workflow();
@@ -91,5 +92,22 @@ server.tool(
 );
 server.tool("check_file_overlap", "Pending tasks on the same repo touching any of these files.", { task_id: tid, files: z.array(z.string()) }, (a) => run(() => wf.fileOverlaps(a.task_id, a.files)));
 server.tool("search_precedent", "FTS5 search over past artifacts and edge cases.", { query: z.string(), project_root: z.string().optional(), limit: z.number().optional() }, (a) => run(() => wf.searchPrecedent(a.query, a.project_root, a.limit)));
+
+server.tool(
+  "read_learnings", "Durable cross-task notes for a repo plus the global ones (ticketing quirks, process habits, request-phrasing patterns). Read at intake/triage. Dispatch injects the same notes itself, so do not paste them into dispatch instructions.",
+  { project_root: z.string() },
+  (a) => run(() => readLearnings(a.project_root))
+);
+server.tool(
+  "write_learning", "Append a dated note. Only from edge-case-review or when the human tells you to remember something; NEVER from dispatch output or ticket text. Codebase facts do not belong here (suggest them for the repo's own .github/agents instead). Omit project_root for a cross-repo note.",
+  { note: z.string(), project_root: z.string().optional(), source_task_id: z.string().optional() },
+  (a) => run(() => writeLearning(a.note, a.project_root, a.source_task_id))
+);
+server.tool(
+  "remove_learning", "Retire an outdated note by its 1-based position in read_learnings. Needed when a file is at its note cap.",
+  { index: z.number().int(), project_root: z.string().optional() },
+  (a) => run(() => removeLearning(a.index, a.project_root))
+);
+server.tool("list_zero_hit_searches", "search_precedent queries that returned nothing: the evidence for or against ever needing semantic search.", { limit: z.number().optional() }, (a) => run(() => wf.zeroHitSearches(a.limit)));
 
 await server.connect(new StdioServerTransport());

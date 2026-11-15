@@ -11,6 +11,7 @@ Rules
 - If something is ambiguous, list it under Open Questions. Do not silently pick an answer.
 - Every assumption you had to make goes under Assumptions.
 - Acceptance criteria must be testable statements.
+- If you find a durable fact about the codebase (structure, convention, deprecated module, flaky test) that the repo's own instruction files do not mention, list it under "Suggested repo-instruction additions" so a human can commit it to the repo's .github/agents or CLAUDE.md. Omit the field if there is nothing. Never present it as a requirement or step.
 
 Output: only this template, nothing before or after.
 
@@ -21,4 +22,5 @@ Scope — In: [...]   Out: [...]
 Acceptance Criteria: [...]
 Assumptions: [...]
 Open Questions: [...]
+Suggested repo-instruction additions: [...]   (optional)
 ```

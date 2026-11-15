@@ -14,12 +14,13 @@ Server entries (same for every client):
 | Client | Where the servers go | Where the system prompt goes |
 |---|---|---|
 | Claude Code | `claude mcp add --scope user workflow-state -- node <REPO>/dist/workflow-state/server.js` (and `dispatch`) | copy `orchestrator-agent/SYSTEM_PROMPT.md` to `~/.claude/agents/orchestrator.md` with frontmatter `name: orchestrator`, `description: SDLC orchestrator` |
-| GitHub Copilot (VS Code) | user `mcp.json` (Command Palette: "MCP: Open User Configuration"), under `"servers"` | `orchestrator.agent.md` in the user prompts folder, or `.github/agents/` of any repo |
-| Cursor | `~/.cursor/mcp.json`, under `"mcpServers"` | a user rule, or `.cursor/rules/orchestrator.mdc` with `alwaysApply: false` |
+| GitHub Copilot (VS Code) | user `mcp.json` under `"servers"` | user `prompts/orchestrator.agent.md`. Prefer `node dist/cli.js install --target copilot --repo <path>` (registers the repo; does not write into the project) |
+| GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `~/.copilot/agents/orchestrator.agent.md`. Prefer `node dist/cli.js install --target copilot-cli --repo <path>` |
+| Cursor | `~/.cursor/mcp.json`, under `"mcpServers"` | `~/.cursor/agents/orchestrator-agent.md` (`@orchestrator-agent`). Prefer `node dist/cli.js install --target cursor --repo <path>` (registers the repo in orchestrator config; does not write into the project) |
 | Claude Desktop | `claude_desktop_config.json`, under `"mcpServers"` | paste into a Project's instructions |
 
 The orchestrator host and the AI platforms used for dispatched work are independent. You can drive from Copilot Chat while analysis runs on Claude and coding on Cursor: set `analysis_platform` / `coding_platform` in `~/.ai-sdlc-orchestrator/config.json` (see `config/config.example.json`).
 
 Each dispatch platform's CLI must be installed and authenticated on the machine: `claude`, `copilot`, `cursor-agent`, or your own command declared under `platforms` in config.json. Run `list_platforms` from the orchestrator to see what is configured.
 
-Environment: `SDLC_DATA_DIR` (default `~/.ai-sdlc-orchestrator`) holds `workflow.db`, `policy.json`, `config.json`, `dispatches/` and `backups/`. `SDLC_CONFIG` points at a different config file.
+Environment: `SDLC_DATA_DIR` (default `~/.ai-sdlc-orchestrator`) holds `workflow.db`, `policy.json`, `config.json`, `learnings/`, `dispatches/` and `backups/`. `SDLC_CONFIG` points at a different config file.

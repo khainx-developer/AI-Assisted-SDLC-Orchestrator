@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, extname, dirname } from "node:path";
 import { dataDir } from "../common/paths.js";
-import { loadConfig } from "../common/config.js";
+import { loadConfig, projectConfig } from "../common/config.js";
 import { resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 
@@ -22,6 +22,8 @@ export interface DispatchMeta {
   pid?: number;
   started_at: string;
   finished_at?: string;
+  /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (design 9.8) */
+  duration_ms?: number;
   skill_version?: string;
   branch?: string;
   // outcome
@@ -124,6 +126,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     clearTimeout(timer);
     const text = platform.parseOutput(out).trim();
     meta.finished_at = new Date().toISOString();
+    meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
     meta.exit_code = code;
     meta.output = text;
     meta.stderr_tail = err.slice(-2000);
@@ -148,7 +151,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
 }
 
 export function detectTestCommand(root: string): string | null {
-  const cfg = loadConfig().projects?.[root]?.test_command;
+  const cfg = projectConfig(root)?.test_command;
   if (cfg) return cfg;
   if (existsSync(join(root, "package.json"))) return "npm test";
   if (existsSync(join(root, "pom.xml"))) return "mvn -q test";

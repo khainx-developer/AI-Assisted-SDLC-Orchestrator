@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig } from "../common/config.js";
+import { loadConfig, projectConfig } from "../common/config.js";
 import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
+import { learningsText } from "../common/learnings.js";
+import { repoInstructionsText } from "./repo-instructions.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, ensureBranch, detectTestCommand } from "./runner.js";
 
 const server = new McpServer({ name: "dispatch", version: "0.1.0" });
@@ -17,7 +19,7 @@ async function run(fn: () => unknown | Promise<unknown>): Promise<Result> {
 /** Precedence: explicit tool arg > per-project override > per-mode default > default_platform. */
 function pickPlatform(mode: "analysis" | "coding", root: string, explicit?: string) {
   const cfg = loadConfig();
-  const proj = cfg.projects?.[root];
+  const proj = projectConfig(root);
   return explicit ?? (mode === "analysis" ? proj?.analysis_platform ?? proj?.platform ?? cfg.analysis_platform : proj?.coding_platform ?? proj?.platform ?? cfg.coding_platform) ?? cfg.default_platform;
 }
 
@@ -45,7 +47,7 @@ server.tool(
   "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage artifact (store that, not `output`); pass skill_version and platform through to record_stage_artifact.",
   {
     task_id: z.string(), project_root: z.string(), stage: z.string(), skill: z.string(), instructions: z.string(),
-    additional_read_roots: z.array(z.string()).optional(), platform: platformArg, model: z.string().optional(),
+    additional_read_roots: z.array(z.string()).optional(), platform: platformArg, model: z.string().optional().describe("one-off override of projects.<root>.model and platforms.<id>.model"),
   },
   (a) => run(async () => {
     const cfg = loadConfig();
@@ -53,7 +55,7 @@ server.tool(
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
       kind: "analysis", task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform), skill_version: skill.version,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots }) },
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status };
   })
@@ -63,7 +65,7 @@ server.tool(
   "dispatch_coding_task",
   "Start a read+write coding session on the chosen AI platform, on the task's branch (created if missing; never main). The session follows the repo's own agent/skill conventions. Returns a dispatch_id immediately; poll get_dispatch_result.",
   {
-    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state"),
+    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default task/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
     instructions: z.string(), target_files: z.array(z.string()).optional(), additional_read_roots: z.array(z.string()).optional(),
     platform: platformArg, model: z.string().optional(),
   },
@@ -73,7 +75,7 @@ server.tool(
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
       kind: "coding", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files }) },
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files, learnings: learningsText(a.project_root) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status };
   })
