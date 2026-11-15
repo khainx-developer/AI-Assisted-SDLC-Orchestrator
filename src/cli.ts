@@ -8,6 +8,7 @@ import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "./common/paths.js";
+import { DEFAULT_BRANCH_PATTERN } from "./common/config.js";
 
 const HELP = `sdlc-orchestrator install [options]
 
@@ -32,7 +33,7 @@ sdlc-orchestrator repos list | add <path>... | remove <path>...   manage registe
 sdlc-orchestrator model show [--repo <path>]                        AI model per repo (overrides the platform's model; a one-off model on a dispatch overrides both)
 sdlc-orchestrator model set <name> --repo <path>                   model name as the repo's AI CLI expects it
 sdlc-orchestrator model reset --repo <path>
-sdlc-orchestrator branch show [--repo <path>]                      branch naming pattern in effect (default task/{key})
+sdlc-orchestrator branch show [--repo <path>]                      branch naming pattern in effect (default story/{key})
 sdlc-orchestrator branch set <pattern> [--repo <path>]             e.g. feature/{key}; without --repo sets the global pattern
 sdlc-orchestrator branch reset [--repo <path>]                     back to the default (or the global pattern, for a repo)
 `;
@@ -169,9 +170,12 @@ function writeConfig() {
   const autoPlatform = !dp && (sole === "cursor" || sole === "copilot-cli")
     ? (sole === "copilot-cli" ? "copilot" : sole)
     : undefined;
-  if (!dp && !ap && !cp && !repoArgs.length) return;
   const file = join(dataDir(), "config.json");
   const cfg = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { default_platform: "claude", platforms: {} };
+  // seed the default branch naming once; never overwrite a pattern the user already chose
+  const seed = cfg.branch_pattern === undefined;
+  if (seed) cfg.branch_pattern = DEFAULT_BRANCH_PATTERN;
+  if (!seed && !dp && !ap && !cp && !repoArgs.length) return;
   for (const r of repoArgs) {
     cfg.projects = cfg.projects ?? {};
     cfg.projects[fwd(r)] = {

@@ -1,11 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dataDir, normRoot } from "../common/paths.js";
 import { branchName } from "../common/config.js";
 import { loadPolicy, policyVersion, type Policy } from "./policy.js";
 import { SCHEMA } from "./schema.js";
+import { parseOpenQuestions, renderGuidance, applyAnswers, type Answer, type OpenQuestion } from "./questions.js";
 
 export interface Flags {
   files_affected: number;
@@ -20,6 +21,11 @@ const p = (s: any) => (s ? JSON.parse(s) : null);
 
 export class WorkflowError extends Error {}
 
+/** Stage documents are Markdown files under the data dir; the database keeps only their metadata. */
+const ARTIFACTS_DIR = "artifacts";
+const artifactRel = (task_id: string, stage: string, version: number) => `${ARTIFACTS_DIR}/${task_id}/${stage}.v${version}.md`;
+const artifactAbs = (rel: string) => join(dataDir(), rel);
+
 export { normRoot };
 
 export class Workflow {
@@ -30,12 +36,26 @@ export class Workflow {
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
     this.db.exec(SCHEMA);
+    this.migrateArtifactsToFiles();
     // one-time normalisation of roots stored before normRoot existed
     for (const table of ["tasks", "search_fts"]) {
       const roots = this.db.prepare(`SELECT DISTINCT project_root AS r FROM ${table}`).all() as { r: string }[];
       for (const { r } of roots) if (r !== normRoot(r)) this.db.prepare(`UPDATE ${table} SET project_root=? WHERE project_root=?`).run(normRoot(r), r);
     }
   }
+  /** One-time: databases created before artifacts were files get a `file` column, and each stored document is written out and cleared from the row. */
+  private migrateArtifactsToFiles() {
+    const cols = this.db.prepare("PRAGMA table_info(stage_artifacts)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "file")) this.db.exec("ALTER TABLE stage_artifacts ADD COLUMN file TEXT");
+    const legacy = this.db.prepare("SELECT id, task_id, stage, version, content FROM stage_artifacts WHERE file IS NULL").all() as any[];
+    for (const r of legacy) {
+      const rel = artifactRel(r.task_id, r.stage, r.version);
+      mkdirSync(dirname(artifactAbs(rel)), { recursive: true });
+      writeFileSync(artifactAbs(rel), r.content); // file first: a crash here leaves the row intact and the next start retries
+      this.db.prepare("UPDATE stage_artifacts SET file=?, content='' WHERE id=?").run(rel, r.id);
+    }
+  }
+
   policy(): Policy {
     return loadPolicy();
   }
@@ -122,9 +142,10 @@ export class Workflow {
     const history = this.db
       .prepare("SELECT from_stage,to_stage,reason,policy_version,created_at FROM transitions WHERE task_id=? ORDER BY id")
       .all(task_id);
-    const artifacts = this.db
+    const artifacts = (this.db
       .prepare("SELECT stage, MAX(version) AS latest_version FROM stage_artifacts WHERE task_id=? GROUP BY stage")
-      .all(task_id);
+      .all(task_id) as { stage: string; latest_version: number }[])
+      .map((a) => ({ ...a, path: artifactAbs(artifactRel(task_id, a.stage, a.latest_version)) }));
     return { ...t, children, last_edge_case: last ?? null, history, artifacts };
   }
 
@@ -226,21 +247,47 @@ export class Workflow {
     if (!this.policy().stages.includes(stage)) throw new WorkflowError(`unknown stage '${stage}'`);
     const v =
       ((this.db.prepare("SELECT MAX(version) AS v FROM stage_artifacts WHERE task_id=? AND stage=?").get(task_id, stage) as any).v ?? 0) + 1;
+    const rel = artifactRel(task_id, stage, v);
+    mkdirSync(dirname(artifactAbs(rel)), { recursive: true });
+    writeFileSync(artifactAbs(rel), content);
     this.db
       .prepare(
-        "INSERT INTO stage_artifacts (task_id,stage,version,content,input_refs_json,skill_version,platform,created_at) VALUES (?,?,?,?,?,?,?,?)"
+        "INSERT INTO stage_artifacts (task_id,stage,version,content,file,input_refs_json,skill_version,platform,created_at) VALUES (?,?,?,'',?,?,?,?,?)" // content stays '': databases created before artifacts were files still declare it NOT NULL
       )
-      .run(task_id, stage, v, content, j(input_refs), skill_version ?? null, platform ?? null, now());
+      .run(task_id, stage, v, rel, j(input_refs), skill_version ?? null, platform ?? null, now());
     this.db.prepare("INSERT INTO search_fts (kind,task_id,project_root,stage,text) VALUES ('artifact',?,?,?,?)").run(task_id, t.project_root, stage, content);
-    return { task_id, stage, version: v };
+    return { task_id, stage, version: v, path: artifactAbs(rel) };
   }
   getArtifact(task_id: string, stage: string, version?: number) {
     const r = version
       ? this.db.prepare("SELECT * FROM stage_artifacts WHERE task_id=? AND stage=? AND version=?").get(task_id, stage, version)
       : this.db.prepare("SELECT * FROM stage_artifacts WHERE task_id=? AND stage=? ORDER BY version DESC LIMIT 1").get(task_id, stage);
     if (!r) throw new WorkflowError(`no '${stage}' artifact for ${task_id}`);
-    const { input_refs_json, ...a } = r as any;
-    return { ...a, input_refs: p(input_refs_json) };
+    const { input_refs_json, file, content: _legacy, ...a } = r as any;
+    // read from disk so edits you make while reviewing are what the next stage sees
+    return { ...a, content: readFileSync(artifactAbs(file), "utf8"), path: artifactAbs(file), input_refs: p(input_refs_json) };
+  }
+
+  /** Open Questions of a stage document (default: the task's current stage), parsed, plus a chat-ready `display` block with how-to-answer and Options. No model call. */
+  openQuestions(task_id: string, stage?: string) {
+    const s = stage ?? this.shape(this.row(task_id)).stage;
+    const a = this.getArtifact(task_id, s);
+    const questions = parseOpenQuestions(a.content);
+    return { task_id, stage: s, version: a.version, path: a.path, count: questions.length, questions, display: this.guidance(task_id, s, a.version, a.path, questions) };
+  }
+
+  /** Record the user's answers as a new document version: answered questions move to a Decisions section. No model call. */
+  answerQuestions(task_id: string, stage: string, answers: Answer[], accept_suggested: string[] = []) {
+    const a = this.getArtifact(task_id, stage);
+    const r = applyAnswers(a.content, answers, accept_suggested);
+    const rec = this.recordArtifact(task_id, stage, r.markdown, [{ stage, version: a.version }], undefined, "mcp-answers");
+    const recorded = `Recorded ${r.decided.map((d) => d.id).join(", ")} as decisions in ${stage} v${rec.version}.`;
+    return { ...rec, decided: r.decided, remaining_count: r.remaining.length, remaining: r.remaining, display: this.guidance(task_id, stage, rec.version, rec.path, r.remaining, recorded) };
+  }
+
+  private guidance(task_id: string, stage: string, version: number, path: string, qs: OpenQuestion[], recorded?: string) {
+    const stages = this.policy().stages;
+    return renderGuidance({ task_id, stage, version, path, qs, nextStage: stages[stages.indexOf(stage) + 1], recorded });
   }
 
   recordEdgeCase(task_id: string, description: string, decision: string, reasoning: string) {
@@ -357,6 +404,7 @@ export class Workflow {
       }
       this.db.exec("COMMIT");
     } catch (e) { this.db.exec("ROLLBACK"); throw e; }
+    for (const id of ids) rmSync(artifactAbs(`${ARTIFACTS_DIR}/${id}`), { recursive: true, force: true });
     return { removed: ids, title: t.title, note: (t.branch ? `git branch ${t.branch} (if any)` : "its git branch (if any)") + " was NOT deleted" };
   }
 
@@ -369,10 +417,12 @@ export class Workflow {
     if (existsSync(target)) return target;
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     copyFileSync(this.file, target);
-    // learnings/ is small, hand-editable memory: back it up alongside the database
-    const lsrc = join(dataDir(), "learnings");
-    if (existsSync(lsrc)) cpSync(lsrc, join(dir, `learnings-${day}`), { recursive: true });
-    for (const prefix of ["workflow-", "learnings-"]) {
+    // learnings/ and artifacts/ are hand-editable files: back them up alongside the database
+    for (const name of ["learnings", ARTIFACTS_DIR]) {
+      const src = join(dataDir(), name);
+      if (existsSync(src)) cpSync(src, join(dir, `${name}-${day}`), { recursive: true });
+    }
+    for (const prefix of ["workflow-", "learnings-", `${ARTIFACTS_DIR}-`]) {
       const files = readdirSync(dir).filter((f) => f.startsWith(prefix)).sort();
       for (const f of files.slice(0, Math.max(0, files.length - retain))) {
         try { rmSync(join(dir, f), { recursive: true, force: true }); } catch { /* best effort */ }

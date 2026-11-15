@@ -3,7 +3,7 @@
   "analysis_platform": "claude",
   "coding_platform": "copilot",
   "dispatch_timeout_minutes": 30,
-  "branch_pattern": "task/{key}",
+  "branch_pattern": "story/{key}",
   "projects": {
     "D:/work/ProjectA": { "slug": "projecta", "model": "claude-sonnet-5-5", "branch_pattern": "feature/{key}", "coding_platform": "cursor", "test_command": "npm test" }
   },

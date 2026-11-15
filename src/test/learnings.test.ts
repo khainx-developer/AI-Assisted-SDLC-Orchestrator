@@ -86,3 +86,16 @@ test("backup copies learnings alongside the database", () => {
   assert.ok(names.some((n) => n.startsWith("learnings-")));
   assert.ok(existsSync(join(dir, "backups", names.find((n) => n.startsWith("learnings-"))!, "_global.md")));
 });
+
+test("a child repo also sees its workspace's notes; writes stay in the file for the root given", () => {
+  writeFileSync(process.env.SDLC_CONFIG!, JSON.stringify({ default_platform: "x", projects: { "D:/work/Plat": { child_repos: ["api"] } } }));
+  L.writeLearning("workspace: services talk over the shared bus", "D:/work/Plat");
+  L.writeLearning("api: handlers live in src/h", "D:/work/Plat/api");
+  const text = L.learningsText("D:/work/Plat/api")!;
+  assert.match(text, /Notes for this repository:\n- \[[^\]]+\] api: handlers/);
+  assert.match(text, /Notes for the workspace this repository belongs to:\n- \[[^\]]+\] workspace: services/);
+  assert.deepEqual(L.readLearnings("D:/work/Plat/api").workspace_notes.length, 1);
+  assert.equal(L.listNotes("D:/work/Plat").length, 1, "child write did not land in the workspace file");
+  assert.doesNotMatch(L.learningsText("D:/work/Plat")!, /api: handlers/, "workspace root does not see child notes");
+  assert.equal(L.readLearnings("D:/work/Other").workspace_notes.length, 0);
+});

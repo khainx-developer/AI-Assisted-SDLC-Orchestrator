@@ -13,14 +13,37 @@ Rules
 - Acceptance criteria must be testable statements.
 - If you find a durable fact about the codebase (structure, convention, deprecated module, flaky test) that the repo's own instruction files do not mention, list it under "Suggested repo-instruction additions" so a human can commit it to the repo's .github/agents or CLAUDE.md. Omit the field if there is nothing. Never present it as a requirement or step.
 
-Output: only this template, nothing before or after.
+Output: only this template, nothing before or after. The output is stored as a Markdown file that a human reviews, so write real Markdown: the `##` headings exactly as below, one bullet per list item (never a bracketed `[a, b, c]` list), no text outside the template.
 
 ```
-Problem Statement: ...
-Goal: ...
-Scope — In: [...]   Out: [...]
-Acceptance Criteria: [...]
-Assumptions: [...]
-Open Questions: [...]
-Suggested repo-instruction additions: [...]   (optional)
+# Requirement: <short title>
+
+## Problem Statement
+<one short paragraph>
+
+## Goal
+<one or two sentences>
+
+## Scope
+### In
+- ...
+### Out
+- ...
+
+## Acceptance Criteria
+1. <testable statement>
+2. ...
+
+## Assumptions
+- ...
+
+## Open Questions
+- **Q1.** <the question, one plain sentence>
+  - Why it matters: <what changes depending on the answer>
+  - Suggested default: <your best proposal, or "none">
+- **Q2.** ...
+(Write "None." if there are none. Keep the `- **Q1.**` label format exactly: tooling reads it. A reader will answer these in chat, so each must stand on its own without the rest of the document.)
+
+## Suggested repo-instruction additions
+- ...   (omit this whole section if there is nothing)
 ```

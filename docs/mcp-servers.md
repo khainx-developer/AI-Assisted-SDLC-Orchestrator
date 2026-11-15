@@ -12,7 +12,8 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 |---|---|
 | Tasks | `create_task`, `get_task_state`, `find_task`, `list_pending_tasks`, `list_child_tasks`, `delete_task` |
 | Stages and gates | `list_valid_transitions`, `transition_stage`, `approve_stage`, `check_gates` |
-| Artifacts | `record_stage_artifact`, `get_stage_artifact` |
+| Artifacts | `record_stage_artifact` (from a `dispatch_id`, no copying), `get_stage_artifact` |
+| Open questions | `get_open_questions` (parsed list + ready-to-print reply with how to answer and Options), `answer_open_questions` (records answers as a new version, no model call) |
 | Policy | `get_policy`, `update_policy` (validated; a bad patch is rejected) |
 | Edge cases and search | `record_edge_case`, `search_precedent`, `list_zero_hit_searches` |
 | Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap`, `update_linked_refs` |

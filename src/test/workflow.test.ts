@@ -20,7 +20,7 @@ test("light task skips to implementation; heavy starts at requirement", () => {
 test("heavy task cannot reach implementation without artifacts; plan gate needs approval", () => {
   const wf = new Workflow();
   const t = wf.createTask({ project_root: "/r", title: "h", source: "jira", flags: risky, linked_refs: { jira_key: "P-1" } });
-  assert.equal(t.branch, "task/P-1");
+  assert.equal(t.branch, "story/P-1");
   assert.throws(() => wf.transition(t.task_id, "implementation", "x"), /artifact missing/);
   for (const s of ["requirement", "design", "plan"]) wf.recordArtifact(t.task_id, s, `${s} body about webhook retry`);
   wf.transition(t.task_id, "plan", "skip to plan");
@@ -114,7 +114,7 @@ test("delete_task removes everything; guards children and in-flight dispatches",
   assert.equal(wf.listPending("/del").length, 0);
 });
 
-test("branch name: default task/{key}; per-repo and global branch_pattern; bad patterns reported not thrown", async () => {
+test("branch name: default story/{key}; per-repo and global branch_pattern; bad patterns reported not thrown", async () => {
   const { writeFileSync } = await import("node:fs");
   const cfg = join(process.env.SDLC_DATA_DIR!, "config.json");
   const prev = process.env.SDLC_CONFIG;
@@ -125,7 +125,7 @@ test("branch name: default task/{key}; per-repo and global branch_pattern; bad p
       wf.createTask({ project_root: root, title: "b", source: jira ? "jira" : "adhoc", flags: light, linked_refs: jira ? { jira_key: jira } : {} });
 
     writeFileSync(cfg, JSON.stringify({ default_platform: "x" }));
-    assert.equal(mk("/b1", "P-9").branch, "task/P-9");
+    assert.equal(mk("/b1", "P-9").branch, "story/P-9");
 
     writeFileSync(cfg, JSON.stringify({ default_platform: "x", branch_pattern: "dev/{key}", projects: { "/b2": { branch_pattern: "feature/{jira_key}" } } }));
     assert.equal(mk("/b2", "P-9").branch, "feature/P-9");
@@ -140,4 +140,40 @@ test("branch name: default task/{key}; per-repo and global branch_pattern; bad p
       assert.match((t as any).branch_error, /branch_pattern/, bad);
     }
   } finally { if (prev === undefined) delete process.env.SDLC_CONFIG; else process.env.SDLC_CONFIG = prev; }
+});
+
+test("artifacts are Markdown files: DB keeps metadata only, edits are honoured, migration moves legacy rows, delete removes the files", async () => {
+  const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+  const wf = new Workflow();
+  const t = wf.createTask({ project_root: "/files", title: "f", source: "adhoc", flags: risky });
+  const r = wf.recordArtifact(t.task_id, "requirement", "# Req\nfirst");
+  assert.ok(r.path.endsWith(join("artifacts", t.task_id, "requirement.v1.md")));
+  assert.equal(readFileSync(r.path, "utf8"), "# Req\nfirst");
+  assert.equal((wf.db.prepare("SELECT content FROM stage_artifacts WHERE task_id=?").get(t.task_id) as any).content, "", "no document body in the database");
+  writeFileSync(r.path, "# Req\nedited by the reviewer");
+  assert.equal(wf.getArtifact(t.task_id, "requirement").content, "# Req\nedited by the reviewer");
+  assert.equal((wf.getTask(t.task_id).artifacts as any[])[0].path, r.path);
+  // legacy row (content in the database, no file) is migrated on the next open
+  wf.db.prepare("INSERT INTO stage_artifacts (task_id,stage,version,content,created_at) VALUES (?,?,?,?,?)").run(t.task_id, "design", 1, "legacy design", "2020-01-01");
+  const again = new Workflow();
+  assert.equal(again.getArtifact(t.task_id, "design").content, "legacy design");
+  assert.equal((again.db.prepare("SELECT content FROM stage_artifacts WHERE stage='design' AND task_id=?").get(t.task_id) as any).content, "");
+  again.deleteTask(t.task_id);
+  assert.equal(existsSync(r.path), false);
+});
+
+test("a database created before artifacts were files (content NOT NULL, no default, no file column) still records artifacts", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync: mk, readFileSync } = await import("node:fs");
+  const old = join(mk(join(tmpdir(), "sdlc-old-")), "old.db");
+  const raw = new DatabaseSync(old);
+  raw.exec(`CREATE TABLE stage_artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, stage TEXT NOT NULL, version INTEGER NOT NULL, content TEXT NOT NULL,
+    input_refs_json TEXT, skill_version TEXT, platform TEXT, created_at TEXT NOT NULL, UNIQUE(task_id, stage, version));`);
+  raw.close();
+  const wf = new Workflow(old);
+  const t = wf.createTask({ project_root: "/oldschema", title: "o", source: "adhoc", flags: risky });
+  const r = wf.recordArtifact(t.task_id, "requirement", "# written on an old schema");
+  assert.equal(readFileSync(r.path, "utf8"), "# written on an old schema");
+  assert.equal(wf.getArtifact(t.task_id, "requirement").content, "# written on an old schema");
 });

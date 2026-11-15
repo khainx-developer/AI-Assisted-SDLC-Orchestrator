@@ -28,9 +28,12 @@ export function repoInstructionFiles(root: string): string[] {
   ].filter((f) => existsSync(f));
 }
 
-/** Concatenated, labelled contents (capped), or null if the repo has none. */
-export function repoInstructionsText(root: string, max = MAX_REPO_INSTRUCTION_CHARS): string | null {
-  const files = repoInstructionFiles(root);
+/**
+ * Concatenated, labelled contents (capped), or null if there are none. `repos` defaults to [root]; for a workspace pass its
+ * child repos so they share ONE size budget and are labelled by their path under `root`.
+ */
+export function repoInstructionsText(root: string, max = MAX_REPO_INSTRUCTION_CHARS, repos: string[] = [root]): string | null {
+  const files = repos.flatMap(repoInstructionFiles);
   if (!files.length) return null;
   let used = 0;
   const parts: string[] = [];

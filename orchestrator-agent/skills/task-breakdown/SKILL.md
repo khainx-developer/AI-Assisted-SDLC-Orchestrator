@@ -13,12 +13,19 @@ Rules
 - If nothing is separable, output "No split — work fits one pass" and zero children.
 - If you find a durable fact about the codebase (structure, convention, deprecated module, flaky test) that the repo's own instruction files do not mention, list it under "Suggested repo-instruction additions" so a human can commit it to the repo's .github/agents or CLAUDE.md. Omit the field if there is nothing. Never present it as a requirement or step.
 
-Output: only this template.
+Output: only this template. The output is stored as a Markdown file that a human reviews, so write real Markdown: the `##` headings exactly as below, one bullet per list item (never a bracketed `[a, b, c]` list), no text outside the template.
 
 ```
-Children:
-  - <title> — <one-line scope> — <project_root/repo> — <why it is independent>
-Coordinated release: yes|no — <reason>
-(or exactly: "No split — work fits one pass")
-Suggested repo-instruction additions: [...]   (optional)
+# Breakdown: <short title>
+
+## Children
+- **<title>** — <one-line scope> — `<project_root/repo>` — <why it is independent>
+
+## Coordinated release
+yes|no — <reason>
+
+## Suggested repo-instruction additions
+- ...   (omit this whole section if there is nothing)
 ```
+
+If the work does not split, output exactly: `No split — work fits one pass` (nothing else).

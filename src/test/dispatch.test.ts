@@ -17,6 +17,7 @@ const prompt = readFileSync(promptFile, "utf8");
 if (behaviour === "edit") writeFileSync("changed.txt", "x");
 if (prompt.includes("READ-ONLY")) {
   if (behaviour === "sneaky") writeFileSync("oops.txt", "x");
+  if (behaviour === "sneaky-child") writeFileSync("api/oops.txt", "x");
   console.log("Problem Statement: fake\\nAssumptions: none");
 } else {
   console.log("done\\n\`\`\`sdlc-result\\n{\\"success\\":true,\\"summary\\":\\"edited\\",\\"needs_clarification\\":false,\\"question\\":null,\\"pr_number\\":7}\\n\`\`\`");
@@ -123,4 +124,89 @@ test("projectConfig matches a repo regardless of slash and drive-letter spelling
   assert.equal(projectConfig("d:/work/Spell/")?.model, "m1");
   assert.equal(projectConfig("D:" + String.fromCharCode(92) + "work" + String.fromCharCode(92) + "Spell")?.model, "m1");
   assert.equal(projectConfig("D:/work/Other"), undefined);
+});
+
+function writeCfgWorkspace(ws: string, behaviour: string) {
+  writeFileSync(cfgPath, JSON.stringify({
+    default_platform: "fake",
+    platforms: { fake: { command: process.execPath, args: [fake, "{prompt_file}", behaviour], prompt_via: "file" } },
+    projects: { [ws]: { child_repos: ["api", "web", "missing"], test_command: "npm run t", branch_pattern: "wk/{key}", model: "m-ws", slug: "ws-slug" } },
+  }));
+}
+
+test("workspace: a child repo inherits the workspace's settings; coding/tests are refused at the non-git root", async () => {
+  const { projectConfig } = await import("../common/config.js");
+  const { projectRepos, requireGitRepo } = await import("../common/target.js");
+  const { detectTestCommand } = await import("../dispatch/runner.js");
+  const ws = join(dir, "ws");
+  const api = join(ws, "api"), web = join(ws, "web");
+  mkdirSync(api, { recursive: true }); mkdirSync(web, { recursive: true });
+  for (const d of [api, web]) {
+    execFileSync("git", ["init", "-q"], { cwd: d });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: d });
+  }
+  writeCfgWorkspace(ws, "edit");
+
+  const inherited = projectConfig(api)!;
+  assert.equal(inherited.model, "m-ws");
+  assert.equal(inherited.branch_pattern, "wk/{key}");
+  assert.equal(inherited.test_command, "npm run t");
+  assert.equal(inherited.child_repos, undefined, "a child is a plain repo");
+  assert.equal(inherited.slug, undefined, "learnings stay per repo");
+  assert.equal(projectConfig(join(dir, "elsewhere")), undefined);
+  assert.equal(detectTestCommand(api), "npm run t");
+
+  assert.deepEqual(projectRepos(repo), [repo]);
+  assert.equal(projectRepos(ws).length, 3);
+  assert.throws(() => requireGitRepo(ws), /workspace, not a git repo.*child task/);
+  assert.throws(() => requireGitRepo(join(dir, "nope")), /not a git repository/);
+  requireGitRepo(api); requireGitRepo(repo);
+
+  // a task rooted at a child is an ordinary single-repo task: branch and coding run there, the root is untouched
+  await ensureBranch(api, "wk/W-1");
+  const head = (d: string) => execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: d, encoding: "utf8" }).trim();
+  assert.equal(head(api), "wk/W-1");
+  assert.notEqual(head(web), "wk/W-1");
+  const m = await startAgentDispatch({ kind: "coding", task_id: "t", platformId: "fake", branch: "wk/W-1", req: { projectRoot: api, extraReadRoots: [], prompt: "implement it" } });
+  const r = await wait(m.dispatch_id);
+  assert.equal(r.status, "completed");
+  assert.ok(r.files_changed!.includes("changed.txt"));
+});
+
+test("workspace analysis at the root: a write inside any child repo is a read-only violation, reported relative to the root", async () => {
+  const { projectRepos } = await import("../common/target.js");
+  const ws = join(dir, "ws");
+  writeCfgWorkspace(ws, "sneaky-child");
+  const a = await startAgentDispatch({ kind: "analysis", task_id: "t", platformId: "fake", repos: projectRepos(ws), req: { projectRoot: ws, extraReadRoots: [], prompt: "READ-ONLY please" } });
+  const ar = await wait(a.dispatch_id);
+  assert.equal(ar.status, "failed");
+  assert.deepEqual(ar.read_only_violation, ["api/oops.txt"]);
+});
+
+test("repo instructions: children share one size budget, labelled by path under the root", async () => {
+  const { repoInstructionsText } = await import("../dispatch/repo-instructions.js");
+  const ws = join(dir, "ws2");
+  for (const k of ["a", "b"]) { mkdirSync(join(ws, k), { recursive: true }); writeFileSync(join(ws, k, "CLAUDE.md"), k.repeat(900)); }
+  const text = repoInstructionsText(ws, 1000, [join(ws, "a"), join(ws, "b")])!;
+  assert.match(text, /--- a\/CLAUDE\.md ---/);
+  assert.ok(text.length < 1400, "one shared cap, not one per repo");
+});
+
+test("completedArtifact hands a finished analysis document to the workflow server, and refuses everything else", async () => {
+  const { completedArtifact } = await import("../common/dispatch-store.js");
+  writeCfg("none");
+  const ok = await wait((await startAgentDispatch({ kind: "analysis", task_id: "t9", platformId: "fake", skill_version: "requirement-analysis@abc12345", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } })).dispatch_id);
+  const got = completedArtifact("t9", ok.dispatch_id);
+  assert.match(got.content, /Problem Statement: fake/);
+  assert.equal(got.skill_version, "requirement-analysis@abc12345");
+  assert.equal(got.platform, "fake");
+  assert.throws(() => completedArtifact("other-task", ok.dispatch_id), /belongs to task t9/);
+  assert.throws(() => completedArtifact("t9", "d_00000000"), /unknown dispatch_id/);
+  assert.throws(() => completedArtifact("t9", "../x"), /invalid dispatch_id/);
+  const bad = await wait((await startAgentDispatch({ kind: "coding", task_id: "t9", platformId: "fake", branch: "b", req: { projectRoot: repo, extraReadRoots: [], prompt: "implement" } })).dispatch_id);
+  assert.throws(() => completedArtifact("t9", bad.dispatch_id), /only analysis dispatches/);
+  writeCfg("sneaky");
+  (await import("node:fs")).rmSync(join(repo, "oops.txt"), { force: true }); // left by the earlier read-only test; only NEW dirty files count
+  const viol = await wait((await startAgentDispatch({ kind: "analysis", task_id: "t9", platformId: "fake", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } })).dispatch_id);
+  assert.throws(() => completedArtifact("t9", viol.dispatch_id), /is failed/);
 });

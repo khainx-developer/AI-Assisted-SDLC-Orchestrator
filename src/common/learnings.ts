@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { dataDir, normRoot } from "./paths.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, workspaceOf } from "./config.js";
 
 /** Cap on notes per file. The file is injected into every dispatch, so it must stay small. */
 export const MAX_NOTES = 20;
@@ -41,19 +41,25 @@ export function listNotes(projectRoot?: string): string[] {
   return lines(learningsFile(projectRoot)).filter(isNote);
 }
 
-/** Notes for a repo plus the global ones, or null when there are none. This is what dispatch injects. */
+/** Notes of the workspace a child repo belongs to ([] for any other repo): they apply to every child task. */
+function workspaceNotes(projectRoot?: string): string[] {
+  const ws = projectRoot ? workspaceOf(projectRoot) : undefined;
+  return ws ? listNotes(ws) : [];
+}
+
+/** Notes for a repo, its workspace (if it is a child repo) and the global ones, or null when there are none. This is what dispatch injects. */
 export function learningsText(projectRoot: string): string | null {
-  const repo = listNotes(projectRoot);
-  const global = listNotes();
-  if (!repo.length && !global.length) return null;
-  return [
-    repo.length ? `Notes for this repository:\n${repo.join("\n")}` : "",
-    global.length ? `Notes that apply to every repository:\n${global.join("\n")}` : "",
-  ].filter(Boolean).join("\n\n");
+  const sections: [string, string[]][] = [
+    ["Notes for this repository", listNotes(projectRoot)],
+    ["Notes for the workspace this repository belongs to", workspaceNotes(projectRoot)],
+    ["Notes that apply to every repository", listNotes()],
+  ];
+  const text = sections.filter(([, notes]) => notes.length).map(([title, notes]) => `${title}:\n${notes.join("\n")}`).join("\n\n");
+  return text || null;
 }
 
 export function readLearnings(projectRoot?: string) {
-  return { file: learningsFile(projectRoot), notes: listNotes(projectRoot), global_notes: projectRoot ? listNotes() : [], max_notes: MAX_NOTES };
+  return { file: learningsFile(projectRoot), notes: listNotes(projectRoot), workspace_notes: workspaceNotes(projectRoot), global_notes: projectRoot ? listNotes() : [], max_notes: MAX_NOTES };
 }
 
 export function writeLearning(note: string, projectRoot?: string, sourceTaskId?: string) {

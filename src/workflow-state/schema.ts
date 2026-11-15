@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS transitions (
 CREATE TABLE IF NOT EXISTS stage_artifacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
-  stage TEXT NOT NULL, version INTEGER NOT NULL, content TEXT NOT NULL,
+  stage TEXT NOT NULL, version INTEGER NOT NULL,
+  content TEXT NOT NULL DEFAULT '', -- legacy rows only; new artifacts live in file (relative to the data dir)
+  file TEXT,
   input_refs_json TEXT, skill_version TEXT, platform TEXT, created_at TEXT NOT NULL,
   UNIQUE(task_id, stage, version)
 );

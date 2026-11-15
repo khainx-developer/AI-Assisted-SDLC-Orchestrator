@@ -8,9 +8,10 @@ A one-page map. Each line links to where it is explained.
 - **Dispatched analysis:** requirement, design, plan and breakdown run in read-only worker sessions so the orchestrator's context stays small. Design §5.2, §8.3
 - **Versioned artifacts:** fixed templates, revisions stored as new versions, each stamped with skill version and platform. Design §9
 - **Approval gates:** risky plans block implementation until you approve; optional auto-approve timeout. Design §6.5
-- **Branch per task:** created automatically, never `main`. Name pattern is configurable globally or per repo (`branch set`, default `task/{key}`). [README: Configuration](../README.md#configuration), design §6.4
+- **Branch per task:** created automatically, never `main`. Name pattern is configurable globally or per repo (`branch set`, default `story/{key}`). [README: Configuration](../README.md#configuration), design §6.4
 - **Test, retry, review:** capped retries, then review flagged `needs_attention`. Design §6.6
 - **Multi-repo:** read-only context from other repos; one child task per repo for changes that span repos, with coordinated release. Design §6.7
+- **Non-git workspace root:** list the git children as `child_repos`; analysis runs at the root, implementation as one child task per repo that inherits the workspace settings. [README: Configuration](../README.md#configuration)
 - **Every reply ends with numbered options**, so there are no commands to remember. [README: Use it](../README.md#use-it)
 
 ## Memory and learning

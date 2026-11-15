@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadConfig, projectConfig } from "../common/config.js";
+import { projectRepos, requireGitRepo } from "../common/target.js";
 import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
@@ -44,7 +45,7 @@ server.tool(
 
 server.tool(
   "dispatch_analysis_task",
-  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage artifact (store that, not `output`); pass skill_version and platform through to record_stage_artifact.",
+  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage document; store it with record_stage_artifact(dispatch_id=...) rather than copying the text (skill_version and platform are recorded from the dispatch).",
   {
     task_id: z.string(), project_root: z.string(), stage: z.string(), skill: z.string(), instructions: z.string(),
     additional_read_roots: z.array(z.string()).optional(), platform: platformArg, model: z.string().optional().describe("one-off override of projects.<root>.model and platforms.<id>.model"),
@@ -53,9 +54,10 @@ server.tool(
     const cfg = loadConfig();
     const skill = loadSkill(a.skill, cfg.skills_dir ?? bundledSkillsDir);
     const roots = a.additional_read_roots ?? [];
+    const repos = projectRepos(a.project_root); // a workspace's analysis runs at its root and may read every child
     const m = await startAgentDispatch({
-      kind: "analysis", task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform), skill_version: skill.version,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root) }) },
+      kind: "analysis", task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform), skill_version: skill.version, repos,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, undefined, repos) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status };
   })
@@ -65,12 +67,13 @@ server.tool(
   "dispatch_coding_task",
   "Start a read+write coding session on the chosen AI platform, on the task's branch (created if missing; never main). The session follows the repo's own agent/skill conventions. Returns a dispatch_id immediately; poll get_dispatch_result.",
   {
-    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default task/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
+    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default story/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
     instructions: z.string(), target_files: z.array(z.string()).optional(), additional_read_roots: z.array(z.string()).optional(),
     platform: platformArg, model: z.string().optional(),
   },
   (a) => run(async () => {
     if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch coding work onto main/master");
+    requireGitRepo(a.project_root);
     await ensureBranch(a.project_root, a.branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
@@ -85,6 +88,7 @@ server.tool(
   "run_tests", "Run the repo's test command (config.json projects.<root>.test_command, else auto-detected). Returns a dispatch_id; result has passed + output tail.",
   { task_id: z.string(), project_root: z.string() },
   (a) => run(() => {
+    requireGitRepo(a.project_root);
     const cmd = detectTestCommand(a.project_root);
     if (!cmd) throw new Error(`no test command detected for ${a.project_root}; set projects."<root>".test_command in config.json`);
     const m = startTestDispatch(a.task_id, a.project_root, cmd);
@@ -93,9 +97,12 @@ server.tool(
 );
 
 server.tool(
-  "get_dispatch_result", "Status and outcome of a dispatch. status in-flight | completed | failed. Coding results include files_changed, success, needs_clarification/question, pr_number; analysis results include output and read_only_violation if the session touched files.",
-  { dispatch_id: z.string() },
-  (a) => run(() => getDispatch(a.dispatch_id))
+  "get_dispatch_result", "Status and outcome of a dispatch. status in-flight | completed | failed. Coding results include files_changed, success, needs_clarification/question, pr_number; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
+  { dispatch_id: z.string(), include_raw: z.boolean().optional() },
+  (a) => run(() => {
+    const { output, ...rest } = getDispatch(a.dispatch_id);
+    return a.include_raw || !rest.artifact ? { ...rest, output } : rest;
+  })
 );
 
 // resolvePlatform is re-exported for tests/tools that want to validate config up front

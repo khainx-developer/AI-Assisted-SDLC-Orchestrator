@@ -22,7 +22,7 @@ You ── chat ──> Orchestrator agent ──> workflow-state MCP  (tasks, s
 | Need | Why |
 |---|---|
 | Node 22.5 or newer | Runs the servers (uses built-in `node:sqlite`, no native packages) |
-| Git | Coding sessions work on a `task/<id>` branch |
+| Git | Coding sessions work on a `story/<id>` branch |
 | A chat tool with MCP support: Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
 | The CLI of the AI that does the dispatched work, installed **and signed in** | Copilot: `npm install -g @github/copilot`, then run `copilot` once. Claude: `claude`. Cursor: `cursor-agent` |
 | Optional: Atlassian (Jira) and GitHub MCP access | Lets the agent read tickets and find PRs. You sign in when your tool prompts |
@@ -81,7 +81,7 @@ resume PROJ-123         also works with a task id or PR number
 1. The orchestrator triages it. A small, reversible change skips straight to implementation. A risky, breaking or vague one goes through **requirement → design → plan**.
 2. Each analysis stage runs in a read-only worker session and produces an **artifact**. You read it, answer its open questions, and **confirm** or **revise** it (revisions are stored as new versions).
 3. A risky **plan** stops at an approval gate. Implementation is refused until you say "approve the plan".
-4. Implementation runs on a `task/<id>` branch (never `main`), then tests, then review.
+4. Implementation runs on a `story/<id>` branch (never `main`), then tests, then review.
 5. If it says work is still running, say `check status`.
 
 **See artifacts**: ask in chat ("show the plan"), or from a terminal (see Commands). **Remove a story**: say `remove 2` (it asks you to confirm; `cancel` keeps the history, `remove` deletes it permanently).
@@ -106,7 +106,7 @@ node dist/cli.js model show [--repo D:/work/ProjectA]
 node dist/cli.js model set <model-name> --repo D:/work/ProjectA
 node dist/cli.js model reset --repo D:/work/ProjectA
 
-# branch naming for coding work (default task/{key}; {key} = Jira key, else task id)
+# branch naming for coding work (default story/{key}; {key} = Jira key, else task id)
 node dist/cli.js branch show [--repo D:/work/ProjectA]
 node dist/cli.js branch set "feature/{key}" --repo D:/work/ProjectA   # omit --repo for the global pattern
 node dist/cli.js branch reset [--repo D:/work/ProjectA]
@@ -138,19 +138,26 @@ Everything lives in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
 |---|---|
 | `config.json` | Which AI platform and model do the work, per repo overrides, registered repos, custom platforms (example: `config/config.example.json`) |
 | `policy.json` | Stages, approval gates (with optional auto-approve timeout), retry limits. Invalid edits are rejected |
-| `workflow.db` | Tasks, history, artifacts, approvals (SQLite) |
+| `workflow.db` | Tasks, history, approvals, and each stage document's metadata and search index (SQLite). The documents themselves are not stored here |
+| `artifacts/<task_id>/<stage>.v<N>.md` | The stage documents (requirement, design, plan...) as Markdown, one file per revision. Open and review them in any editor; the next stage reads the file, so your edits count. Databases from older versions are migrated to files automatically on first start |
 | `learnings/` | One markdown file per repo plus `_global.md`: durable notes about ticketing quirks, team habits and how requests are phrased. Injected into every dispatch. Hand-editable; max 20 notes per file. Name a repo's file with `projects.<root>.slug` in `config.json`, else `<folder>-<hash>` |
 | `dispatches/` | One folder per worker session: the prompt sent, raw output, status |
-| `backups/` | Daily copy of `workflow.db` and `learnings/`, newest 14 kept |
+| `backups/` | Daily copy of `workflow.db`, `learnings/` and `artifacts/`, newest 14 kept |
 
-**Branch names.** Coding work always runs on its own branch, created automatically from whatever is checked out. The default name is `task/<Jira key or task id>`. To follow your team's convention, run `node dist/cli.js branch set "feature/{key}" --repo <path>` (see Commands; it validates the pattern and shows an example name), or set `branch_pattern` globally or per repo in `config.json` yourself:
+**Branch names.** Coding work always runs on its own branch, created automatically from whatever is checked out. The default name is `story/<Jira key or task id>` (the installer writes it to `config.json` as `branch_pattern`; it never overwrites one you set). To follow your team's convention, run `node dist/cli.js branch set "feature/{key}" --repo <path>` (see Commands; it validates the pattern and shows an example name), or set `branch_pattern` globally or per repo in `config.json` yourself:
 ```json
 {
-  "branch_pattern": "task/{key}",
+  "branch_pattern": "story/{key}",
   "projects": { "D:/work/ProjectA": { "branch_pattern": "feature/{key}" } }
 }
 ```
 Placeholders: `{key}` (Jira key, or the task id when there is none), `{jira_key}` (same fallback), `{task_id}`. The per-repo value wins. A pattern must contain a placeholder and may not produce `main`/`master`; an invalid one is reported on the task and blocks coding dispatch rather than creating a wrong branch.
+
+**Workspace root that is not a git repo.** If the folder you register is a plain directory whose children are the git repos, list them in `config.json`:
+```json
+{ "projects": { "D:/work/Platform": { "child_repos": ["api", "web"], "test_command": "npm test" } } }
+```
+Branches are created in the child repos, never in the root, by giving each repo its own task: the orchestrator runs analysis at the workspace root (read-only, covering every child and their instruction files), then splits implementation into one child task per repo, each with `project_root` set to that child's path. A child task is an ordinary single-repo task with its own branch, dispatch, tests and PR, and it inherits the workspace's `platform`, `model`, `branch_pattern` and `test_command` unless the child has its own `projects` entry. `dispatch_coding_task` and `run_tests` on the workspace root itself are refused with a message listing the children. Without `child_repos` nothing changes.
 
 **Model per repo.** The model is normally set per platform (`platforms.<id>.model`), so every repo using that platform shares it. To give one repo its own, use `model set` (Commands) or `projects.<root>.model` in `config.json`. Precedence: a model named on a single dispatch, then the repo's `model`, then the platform's `model`, then the CLI's own default. The name must be valid for that repo's AI CLI; a repo whose analysis and coding run on different platforms should keep using the per-platform setting.
 

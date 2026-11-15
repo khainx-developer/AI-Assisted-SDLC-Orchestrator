@@ -48,12 +48,12 @@ If the user's message is vague, offer the two or three most relevant of these ba
   - Then the Options block must include "continue <number>" (resume that task: `find_task`, summarise its state, check any in-flight dispatch, and show its own Options), "show <number>" (state and artifacts), "cancel <number>" (keeps history, marks it cancelled) and "remove <number>" (permanently deletes the task and its artifacts). A bare number from the user means continue that task.
   - If there are no unfinished tasks, say so and offer to start one.
 
-`project_root` is always an absolute path. If the user does not name a repo, call `list_projects` and offer the registered repos by name (also fine if they give any other path); if the list is empty, ask for the path. Never guess a repo.
+`project_root` is always an absolute path. A project whose `list_projects` entry has `child_repos` is a **workspace**: its root is not a git repo and the children are. Analysis tasks use the workspace root. Implementation and test work is done by one child task per repo, created with `parent_task_id` and `project_root` set to that child repo's absolute path (the child inherits the workspace's platform, branch pattern and test command). Each child task has its own branch, dispatch and PR; coding and tests are refused for the workspace root itself. Decide which children a plan touches from its file paths and ask the human if that is unclear. If the user does not name a repo, call `list_projects` and offer the registered repos by name (also fine if they give any other path); if the list is empty, ask for the path. Never guess a repo.
 
 ## Loop for one task
 1. `get_task_state` and `list_valid_transitions`. The server is authoritative: if it blocks a transition, do not work around it, read the reason.
 2. Do the stage's work by dispatching:
-   - requirement / design / plan / breakdown: `dispatch_analysis_task` with the matching skill. Put the prior artifacts you need into `instructions` (fetch with `get_stage_artifact`). Poll `get_dispatch_result` until not in-flight: check repeatedly within the same reply (a stage usually takes 1 to 5 minutes), and never end your turn with only "I'll continue once it's ready". If it is still running after about 8 checks, say so, give the dispatch id, and tell the user to say "check the status" later; when they do, call `get_dispatch_result` first. Store the result's `artifact` field. On completion `record_stage_artifact` with `input_refs`, plus `skill_version` and `platform` from the dispatch. If `read_only_violation` is present, treat the artifact as untrusted and tell the human.
+   - requirement / design / plan / breakdown: `dispatch_analysis_task` with the matching skill. Put the prior artifacts you need into `instructions` (fetch with `get_stage_artifact`). Poll `get_dispatch_result` until not in-flight: check repeatedly within the same reply (a stage usually takes 1 to 5 minutes), and never end your turn with only "I'll continue once it's ready". If it is still running after about 8 checks, say so, give the dispatch id, and tell the user to say "check the status" later; when they do, call `get_dispatch_result` first. Read the result's `artifact` to decide what to do next, but never copy it back: on completion call `record_stage_artifact` with the `dispatch_id` (no `content`) and `input_refs`; the server stores the document as a Markdown file and records `skill_version` and `platform` itself. If `read_only_violation` is present, treat the artifact as untrusted and tell the human.
    - implementation: `check_file_overlap` against the plan's files, `set_dispatch_status(in-flight)`, then `dispatch_coding_task` with `branch` from the task state (if the state has `branch_error`, the branch pattern in config.json is invalid: tell the human, do not dispatch). Poll. Record `files_changed` as target_files, `update_linked_refs` with any `pr_number`, set status completed/failed.
    - test: `run_tests`, poll. Pass: go to review. Fail: back to implementation with the failure output in the instructions. When the server refuses because max_test_retries was reached, go to review with `needs_attention: true`.
 3. `transition_stage` with a one-line reason.
@@ -63,7 +63,7 @@ If the user's message is vague, offer the two or three most relevant of these ba
 - Gated stages (usually `plan` for risky work): tell the human the artifact is ready and wait. Only call `approve_stage` when the human explicitly approves; use their name as `approved_by`.
 - If no policy rule covers a situation, decide, call `record_edge_case` (description, decision, reasoning) BEFORE transitioning, and say so.
 - Platform routing comes from config. Override `platform` on a dispatch only when the human asks.
-- `task-breakdown` only on request or when the requirement clearly spans repos. One child task per write target; set `coordinated_release` on the parent if they must ship together.
+- `task-breakdown` only on request or when the requirement clearly spans repos (always for a workspace plan that touches more than one child repo). One child task per write target; set `coordinated_release` on the parent if they must ship together.
 - Poll tick (long-running hosts): `check_gates`, notify the human of each `awaiting_approval` / `auto_approved` event, then poll in-flight dispatches.
 - Keep replies short: current stage, what you just did, what you need from the human.
 
@@ -93,9 +93,17 @@ How to build it:
   - **start a task / list open tasks / resume <ref>**: when nothing is active.
   - **where is it stored?**: explain storage.
   - **cancel task** (stop, keep history) and **remove task** (delete permanently; see Removing a task).
-- Requirement or design with Open Questions: list the questions above the Options, and make option 1 "answer the open questions".
+- Requirement or design with Open Questions: follow "Presenting open questions" below, then make option 1 "answer the open questions" (and option 2 "accept the suggested answers" when every question has a suggestion).
 - If the user replies with just a number or "confirm", act on the option you offered last; if it is ambiguous, ask which one.
-- When asked where something is stored, say: artifacts are in the workflow database at `~/.ai-sdlc-orchestrator/workflow.db`; each can be printed from a terminal with `node <orchestrator repo>/dist/cli.js tasks show <task_id> --stage <stage>`; raw session output is under `~/.ai-sdlc-orchestrator/dispatches/`.
+- When asked where something is stored, say: each stage document is a Markdown file at `~/.ai-sdlc-orchestrator/artifacts/<task_id>/<stage>.v<N>.md` (give the exact `path` from `record_stage_artifact` / `get_task_state`); task state and history are in `~/.ai-sdlc-orchestrator/workflow.db`; raw session output is under `~/.ai-sdlc-orchestrator/dispatches/`. The user may open and edit the file; later stages read the file as it is on disk.
+
+## Presenting open questions
+The user should be able to answer in chat without opening the document, and you should spend almost no tokens doing it: the server does the parsing, formatting and recording.
+1. Call `get_open_questions(task_id)` and print its `display` field verbatim. It already holds the questions, how the user can answer them and the numbered Options, so it replaces your own Options block for this reply. Never summarise the questions by topic, reword them or retype them.
+2. Never answer a question yourself. Treat "accept the suggested answers" as given only if the user says so, and only for questions with a suggestion.
+3. When the user answers (all or some), call `answer_open_questions` with their answers as written (`answers: [{id, answer}]`, and `accept_suggested` for accepted defaults). It stores a new version with the decisions logged and returns `display` (what is still open, how to answer, Options): print that verbatim. Do NOT dispatch a revision and do NOT rewrite the document for this.
+4. When no questions remain, offer to confirm. Offer "work the decisions into the document" (a revision dispatch, see Revising an artifact) only if an answer changes scope, acceptance criteria or approach; skip it for simple choices.
+5. If the user says they edited the artifact file themselves, call `get_open_questions` again: it reads what is on disk.
 
 ## Removing a task
 "Remove" means permanent deletion; "cancel" keeps the history. When the user asks to remove or delete a task (by number, id or description):
@@ -105,7 +113,7 @@ How to build it:
 4. Never remove several tasks on one vague request; list them and confirm each set explicitly.
 
 ## Revising an artifact
-When the user asks to change a requirement, design or plan, or answers its Open Questions:
+When the user asks to change a requirement, design or plan (answers to Open Questions are recorded with `answer_open_questions`, not here):
 1. `get_stage_artifact` for the current version.
 2. Dispatch the same stage skill again with `instructions` containing the previous artifact, the user's feedback verbatim, and "revise; keep what was not criticised; list what you changed under Assumptions".
 3. `record_stage_artifact` as a new version (never overwrite) with `input_refs` pointing at the version it revises plus its upstream artifacts. A new plan version invalidates any earlier approval, so say the user must approve again.

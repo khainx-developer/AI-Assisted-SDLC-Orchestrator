@@ -2,46 +2,15 @@ import { spawn, execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { join, extname, dirname } from "node:path";
-import { dataDir } from "../common/paths.js";
+import { join, extname, dirname, relative } from "node:path";
+import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
 import { loadConfig, projectConfig } from "../common/config.js";
 import { resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 
 const execFileP = promisify(execFile);
-const dispatchDir = (id: string) => join(dataDir(), "dispatches", id);
-const metaFile = (id: string) => join(dispatchDir(id), "meta.json");
 
-export interface DispatchMeta {
-  dispatch_id: string;
-  kind: "analysis" | "coding" | "test";
-  task_id: string;
-  platform: string;
-  project_root: string;
-  status: "in-flight" | "completed" | "failed";
-  pid?: number;
-  started_at: string;
-  finished_at?: string;
-  /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (design 9.8) */
-  duration_ms?: number;
-  skill_version?: string;
-  branch?: string;
-  // outcome
-  output?: string;
-  /** analysis only: the cleaned stage artifact (use this, not output) */
-  artifact?: string;
-  exit_code?: number | null;
-  error?: string;
-  stderr_tail?: string;
-  files_changed?: string[];
-  read_only_violation?: string[];
-  success?: boolean;
-  needs_clarification?: boolean;
-  question?: string | null;
-  pr_number?: number | null;
-  summary?: string;
-  passed?: boolean;
-}
+export type { DispatchMeta };
 
 function save(m: DispatchMeta) { writeFileSync(metaFile(m.dispatch_id), JSON.stringify(m, null, 2)); }
 
@@ -51,6 +20,15 @@ export async function git(cwd: string, ...args: string[]) {
 }
 async function porcelain(cwd: string): Promise<string[]> {
   try { return (await git(cwd, "status", "--porcelain")).split("\n").filter(Boolean).map((l) => l.slice(3)); } catch { return []; }
+}
+
+/** Dirty files across repos, as paths relative to `root` (unprefixed for the root repo itself). */
+async function porcelainAll(root: string, repos: string[]): Promise<string[]> {
+  const perRepo = await Promise.all(repos.map(async (k) => {
+    const prefix = relative(root, k).split("\\").join("/");
+    return (await porcelain(k)).map((f) => (prefix ? `${prefix}/${f}` : f));
+  }));
+  return perRepo.flat();
 }
 
 export async function ensureBranch(cwd: string, branch: string) {
@@ -88,6 +66,8 @@ interface StartArgs {
   req: Omit<DispatchRequest, "promptFile" | "mode">;
   skill_version?: string;
   branch?: string;
+  /** repos whose dirty files an analysis session is checked against (a workspace has several); defaults to [req.projectRoot] */
+  repos?: string[];
 }
 
 export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
@@ -106,10 +86,12 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
 
   const req: DispatchRequest = { ...a.req, mode: a.kind, promptFile };
   const inv = platform.build(req, override, promptArg);
-  const before = a.kind === "analysis" ? await porcelain(a.req.projectRoot) : [];
+  const root = a.req.projectRoot;
+  const repos = a.repos ?? [root];
+  const before = a.kind === "analysis" ? await porcelainAll(root, repos) : [];
 
   const meta: DispatchMeta = {
-    dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: a.req.projectRoot,
+    dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: root,
     status: "in-flight", started_at: new Date().toISOString(), skill_version: a.skill_version, branch: a.branch,
   };
   const child = spawn(exe, inv.args, { cwd: a.req.projectRoot, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
@@ -131,7 +113,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     meta.output = text;
     meta.stderr_tail = err.slice(-2000);
     if (spawnErr) meta.error = `could not start '${exe}': ${spawnErr.message}`;
-    const after = await porcelain(a.req.projectRoot);
+    const after = a.kind === "analysis" ? await porcelainAll(root, repos) : await porcelain(a.req.projectRoot);
     if (a.kind === "analysis") {
       meta.artifact = extractArtifact(text);
       const added = after.filter((f) => !before.includes(f));
@@ -190,9 +172,7 @@ export function startTestDispatch(task_id: string, root: string, command: string
 }
 
 export function getDispatch(id: string): DispatchMeta {
-  if (!/^d_[0-9a-f]{8}$/.test(id)) throw new Error("invalid dispatch_id");
-  if (!existsSync(metaFile(id))) throw new Error(`unknown dispatch_id '${id}'`);
-  const m: DispatchMeta = JSON.parse(readFileSync(metaFile(id), "utf8"));
+  const m = readDispatchMeta(id);
   if (m.status === "in-flight" && m.pid) {
     try { process.kill(m.pid, 0); }
     catch { // owning process is gone and never wrote a result (e.g. the server restarted mid-run)
