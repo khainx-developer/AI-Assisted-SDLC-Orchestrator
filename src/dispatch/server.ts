@@ -130,9 +130,12 @@ server.tool(
 );
 
 server.tool(
-  "get_dispatch_result", "Status and outcome of a dispatch. status in-flight | completed | failed. Coding results include files_changed (everything dirty) and files_touched (what this session changed), success, needs_clarification/question, pr_number, spec_wrong/spec_issue, scope_violation and frozen_test_violation; test-authoring results include frozen_files; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
-  { dispatch_id: z.string(), include_raw: z.boolean().optional() },
-  (a) => run(() => {
+  "get_dispatch_result", "Status and outcome of a dispatch. Pass wait_seconds (max 55) to block until it finishes instead of returning immediately; use it when polling. status in-flight | completed | failed. Coding results include files_changed (everything dirty) and files_touched (what this session changed), success, needs_clarification/question, pr_number, spec_wrong/spec_issue, scope_violation and frozen_test_violation; test-authoring results include frozen_files; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
+  { dispatch_id: z.string(), include_raw: z.boolean().optional(), wait_seconds: z.number().int().min(0).max(55).optional() },
+  (a) => run(async () => {
+    // Long-poll: hold the call until the dispatch finishes (or the wait elapses) so the agent does not burn its checks in a few seconds
+    const until = Date.now() + (a.wait_seconds ?? 0) * 1000;
+    while (getDispatch(a.dispatch_id).status === "in-flight" && Date.now() < until) await new Promise((r) => setTimeout(r, 2000));
     const { output, ...rest } = getDispatch(a.dispatch_id);
     return a.include_raw || !rest.artifact ? { ...rest, output } : rest;
   })
