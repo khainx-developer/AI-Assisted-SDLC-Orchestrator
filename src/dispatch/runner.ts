@@ -102,6 +102,8 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const isShim = process.platform === "win32" && /\.(cmd|bat)$/i.test(exe);
   let via = override.prompt_via ?? platform.promptVia;
   if (via === "arg" && isShim) via = "file"; // shims go through cmd.exe, where multi-line args cannot be quoted safely
+  // Windows caps a command line at ~32K chars (spawn ENAMETOOLONG); skill + learnings + repo instructions blow past that
+  if (via === "arg" && a.req.prompt.length > 8000) via = "file";
   const promptArg = via === "file" ? `Read the file ${promptFile} and follow the instructions in it exactly.` : a.req.prompt;
 
   const writes = a.kind !== "analysis";
