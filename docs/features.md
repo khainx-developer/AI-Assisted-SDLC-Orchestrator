@@ -10,6 +10,9 @@ A one-page map. Each line links to where it is explained.
 - **Approval gates:** risky plans block implementation until you approve; optional auto-approve timeout. Design §6.5
 - **Branch per task:** created automatically, never `main`. Name pattern is configurable globally or per repo (`branch set`, default `story/{key}`). [README: Configuration](../README.md#configuration), design §6.4
 - **Test, retry, review:** capped retries, then review flagged `needs_attention`. Design §6.6
+- **Tests first (optional):** a separate session writes the failing tests, they are checked to fail for the right reason (`red`, not `vacuous` or `broken`) and frozen, then the coding session must make them pass without editing them. Off by default; the orchestrator offers it only for bug fixes, logic and risky changes. [README: Tests first](../README.md#tests-first-scope-and-wrong-specs), design §6.8
+- **Scope check:** the plan's "Files touched" is the allowed scope of the coding session; files changed outside it are reported (`warn`, default) or fail the dispatch (`fail`). Design §6.8
+- **Spec proven wrong:** a coding session can say the plan itself is wrong. The task goes back to plan / design / requirement with the issue added as an open question, instead of being patched around; capped per task. Design §6.8
 - **Multi-repo:** read-only context from other repos; one child task per repo for changes that span repos, with coordinated release. Design §6.7
 - **Non-git workspace root:** list the git children as `child_repos`; analysis runs at the root, implementation as one child task per repo that inherits the workspace settings. [README: Configuration](../README.md#configuration)
 - **Every reply ends with numbered options**, so there are no commands to remember. [README: Use it](../README.md#use-it)

@@ -11,7 +11,7 @@ process.env.SDLC_DATA_DIR = dir;
 // A fake "AI CLI": reads the prompt file, optionally edits a file, prints a result.
 const fake = join(dir, "fake-ai.mjs");
 writeFileSync(fake, `
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 const [,, promptFile, behaviour] = process.argv;
 const prompt = readFileSync(promptFile, "utf8");
 if (behaviour === "edit") writeFileSync("changed.txt", "x");
@@ -20,7 +20,12 @@ if (prompt.includes("READ-ONLY")) {
   if (behaviour === "sneaky-child") writeFileSync("api/oops.txt", "x");
   console.log("Problem Statement: fake\\nAssumptions: none");
 } else {
-  console.log("done\\n\`\`\`sdlc-result\\n{\\"success\\":true,\\"summary\\":\\"edited\\",\\"needs_clarification\\":false,\\"question\\":null,\\"pr_number\\":7}\\n\`\`\`");
+  if (behaviour.startsWith("scope:")) { const n = behaviour.slice(6); mkdirSync("src", { recursive: true }); writeFileSync("src/" + n, "1"); writeFileSync("out-" + n, "1"); }
+  if (behaviour === "write-tests") { mkdirSync("tests", { recursive: true }); writeFileSync("tests/a.test.js", "t1"); writeFileSync("stub.js", "s"); }
+  if (behaviour === "frozen-edit") appendFileSync("tests/a.test.js", "cheat");
+  const wrong = behaviour === "specwrong";
+  const result = { success: true, summary: "edited", needs_clarification: false, question: null, pr_number: 7, spec_wrong: wrong, spec_issue: wrong ? "step 2 contradicts step 4" : null };
+  console.log("done\\n\`\`\`sdlc-result\\n" + JSON.stringify(result) + "\\n\`\`\`");
 }
 `);
 const cfgPath = join(dir, "config.json");
@@ -209,4 +214,128 @@ test("completedArtifact hands a finished analysis document to the workflow serve
   (await import("node:fs")).rmSync(join(repo, "oops.txt"), { force: true }); // left by the earlier read-only test; only NEW dirty files count
   const viol = await wait((await startAgentDispatch({ kind: "analysis", task_id: "t9", platformId: "fake", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } })).dispatch_id);
   assert.throws(() => completedArtifact("t9", viol.dispatch_id), /is failed/);
+});
+
+// ---- write-session guards: scope, test-first, frozen tests, spec_wrong ----
+
+const writeGuardCfg = (behaviour: string, extra: Record<string, unknown> = {}) =>
+  writeFileSync(cfgPath, JSON.stringify({
+    default_platform: "fake",
+    platforms: { fake: { command: process.execPath, args: [fake, "{prompt_file}", behaviour], prompt_via: "file" } },
+    ...extra,
+  }));
+const coding = (over: Record<string, unknown> = {}) =>
+  startAgentDispatch({ kind: "coding", task_id: "g", platformId: "fake", branch: "task/PROJ-1", req: { projectRoot: repo, extraReadRoots: [], prompt: "implement it" }, ...over } as any);
+
+test("scope: files outside the plan's scope are reported as a warning by default and fail the dispatch with scope_check=fail", async () => {
+  writeGuardCfg("scope:one");
+  const warn = await wait((await coding({ targetFiles: ["src/"] })).dispatch_id);
+  assert.equal(warn.status, "completed", "warn does not fail the dispatch");
+  assert.deepEqual(warn.scope_violation, ["out-one"]);
+  assert.equal(warn.scope_check, "warn");
+  assert.ok(warn.files_touched!.includes("src/one") && warn.files_touched!.includes("out-one"));
+  assert.ok(warn.prompt_chars! > 0 && warn.duration_ms! >= 0, "cost signals are recorded");
+
+  writeGuardCfg("scope:two", { scope_check: "fail" });
+  const fail = await wait((await coding({ targetFiles: ["src/"] })).dispatch_id);
+  assert.equal(fail.status, "failed");
+  assert.deepEqual(fail.scope_violation, ["out-two"]);
+
+  writeGuardCfg("scope:three", { scope_check: "off" });
+  assert.equal((await wait((await coding({ targetFiles: ["src/"] })).dispatch_id)).scope_violation, undefined);
+
+  writeGuardCfg("scope:four", { scope_allow: ["out-*"] });
+  assert.equal((await wait((await coding({ targetFiles: ["src/"] })).dispatch_id)).scope_violation, undefined, "scope_allow globs are always allowed");
+
+  writeGuardCfg("scope:five");
+  assert.equal((await wait((await coding()).dispatch_id)).scope_violation, undefined, "no declared scope, nothing to compare");
+});
+
+test("scope: files that were already dirty before the session are not blamed on it", async () => {
+  writeGuardCfg("scope:one"); // rewrites the same content to the same files: nothing changes
+  const r = await wait((await coding({ targetFiles: ["src/"] })).dispatch_id);
+  assert.deepEqual(r.files_touched, []);
+  assert.equal(r.scope_violation, undefined);
+  assert.ok(r.files_changed!.length > 0, "files_changed still lists everything dirty");
+});
+
+test("test-first: test-authoring freezes the tests it wrote; stubs outside test_paths are flagged", async () => {
+  writeGuardCfg("write-tests");
+  const t = await wait((await startAgentDispatch({ kind: "test-authoring", task_id: "g", platformId: "fake", branch: "task/PROJ-1", testPaths: ["tests/"],
+    req: { projectRoot: repo, extraReadRoots: [], prompt: "write the tests" } })).dispatch_id);
+  assert.equal(t.status, "completed");
+  assert.equal(t.kind, "test-authoring");
+  assert.deepEqual(t.frozen_files, ["tests/a.test.js"]);
+  assert.deepEqual(t.scope_violation, ["stub.js"]);
+  const { frozenFilesFrom } = await import("../common/dispatch-store.js");
+  assert.deepEqual(frozenFilesFrom("g", t.dispatch_id), ["tests/a.test.js"]);
+  assert.throws(() => frozenFilesFrom("other", t.dispatch_id), /belongs to task/);
+});
+
+test("test-first: a session that writes no tests fails visibly", async () => {
+  writeGuardCfg("none");
+  const t = await wait((await startAgentDispatch({ kind: "test-authoring", task_id: "g", platformId: "fake", branch: "task/PROJ-1", testPaths: ["tests/"],
+    req: { projectRoot: repo, extraReadRoots: [], prompt: "write the tests" } })).dispatch_id);
+  assert.equal(t.status, "failed");
+  assert.match(t.error!, /wrote no test files/);
+  const { frozenFilesFrom } = await import("../common/dispatch-store.js");
+  assert.throws(() => frozenFilesFrom("g", t.dispatch_id), /is failed/);
+});
+
+test("frozen tests: editing one fails the coding dispatch and the original is backed up; leaving them alone passes", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  writeGuardCfg("frozen-edit");
+  const bad = await wait((await coding({ frozenFiles: ["tests/a.test.js"] })).dispatch_id);
+  assert.equal(bad.status, "failed");
+  assert.deepEqual(bad.frozen_test_violation, ["tests/a.test.js"]);
+  const backup = join(bad.frozen_backup!, "tests", "a.test.js");
+  assert.ok(existsSync(backup));
+  assert.equal(readFileSync(backup, "utf8"), "t1", "the backup holds the file as it was before the session");
+  writeFileSync(join(repo, "tests", "a.test.js"), "t1"); // put it back by hand, as the human would
+
+  writeGuardCfg("scope:six");
+  const ok = await wait((await coding({ frozenFiles: ["tests/a.test.js"], targetFiles: ["src/"] })).dispatch_id);
+  assert.equal(ok.status, "completed");
+  assert.equal(ok.frozen_test_violation, undefined);
+  assert.equal(ok.scope_violation?.includes("tests/a.test.js"), false, "frozen files are never reported as scope violations");
+});
+
+test("a coding session that reports a wrong spec is marked unsuccessful with the issue", async () => {
+  writeGuardCfg("specwrong");
+  const r = await wait((await coding()).dispatch_id);
+  assert.equal(r.spec_wrong, true);
+  assert.equal(r.spec_issue, "step 2 contradicts step 4");
+  assert.equal(r.success, false);
+});
+
+test("parseCodingResult reads spec_wrong; older result blocks without it still parse", () => {
+  const r = parseCodingResult('```sdlc-result\n{"success":false,"spec_wrong":true,"spec_issue":"plan step 3 needs a table that does not exist"}\n```');
+  assert.equal(r?.spec_wrong, true);
+  assert.match(r!.spec_issue!, /table/);
+  const old = parseCodingResult('```sdlc-result\n{"success":true,"summary":"ok"}\n```');
+  assert.equal(old?.spec_wrong, false);
+  assert.equal(old?.spec_issue, null);
+});
+
+test("run_tests with expect_fail gives a verdict: red, broken or vacuous", async () => {
+  const { startTestDispatch } = await import("../dispatch/runner.js");
+  const run = async (cmd: string, expectFail = true) => wait(startTestDispatch("g", repo, cmd, expectFail).dispatch_id);
+  assert.equal((await run('node -e "console.error(\'AssertionError: expected 1 to equal 2\'); process.exit(1)"')).verdict, "red");
+  assert.equal((await run('node -e "console.error(\'Cannot find module x\'); process.exit(1)"')).verdict, "broken");
+  const pass = await run('node -e "process.exit(0)"');
+  assert.equal(pass.verdict, "vacuous");
+  assert.equal(pass.passed, true);
+  const plain = await run('node -e "process.exit(0)"', false);
+  assert.equal(plain.verdict, undefined, "no verdict unless expect_fail was asked for");
+  assert.ok(plain.duration_ms! >= 0);
+});
+
+test("repo settings: tests_first defaults off, scope_check defaults to warn, repo value wins over global", async () => {
+  const { repoSettings } = await import("../common/config.js");
+  writeGuardCfg("none");
+  assert.deepEqual(repoSettings(repo), { tests_first: false, scope_check: "warn", scope_allow: [], test_command: null });
+  writeGuardCfg("none", { tests_first: true, scope_check: "fail", scope_allow: ["a"], projects: { [repo]: { tests_first: false, scope_check: "off", scope_allow: ["b"], test_command: "npm t" } } });
+  assert.deepEqual(repoSettings(repo), { tests_first: false, scope_check: "off", scope_allow: ["a", "b"], test_command: "npm t" });
+  writeGuardCfg("none", { scope_check: "bogus" });
+  assert.equal(repoSettings(repo).scope_check, "warn", "an invalid value falls back to warn");
 });

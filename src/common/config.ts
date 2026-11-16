@@ -2,6 +2,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { dataDir, normRoot } from "./paths.js";
 
+export type ScopeCheck = "off" | "warn" | "fail";
+
 export interface PlatformOverride {
   command?: string;
   extra_args?: string[];
@@ -19,10 +21,20 @@ export interface OrchestratorConfig {
   coding_platform?: string;
   /** per-repo override keyed by absolute project_root */
   projects?: Record<string, { model?: string; branch_pattern?: string; slug?: string; platform?: string; analysis_platform?: string; coding_platform?: string; test_command?: string;
+    /** write the failing tests in a separate session first and freeze them (default false) */
+    tests_first?: boolean;
+    /** what to do when a coding session changes files outside the plan's scope (default "warn") */
+    scope_check?: ScopeCheck;
+    /** extra paths/globs always allowed by the scope check, e.g. lockfiles */
+    scope_allow?: string[];
     /** Workspace mode: project_root itself is NOT a git repo; these child directories (relative to project_root, or absolute) are. Branches, coding dispatches and tests run per child repo. */
     child_repos?: string[] }>;
   /** branch name for coding work, e.g. "feature/{key}". Placeholders: {key} (Jira key, else task id), {jira_key}, {task_id}. Default "story/{key}". Per-repo value wins. */
   branch_pattern?: string;
+  /** global defaults for the three per-repo settings above; a repo's own value wins */
+  tests_first?: boolean;
+  scope_check?: ScopeCheck;
+  scope_allow?: string[];
   platforms: Record<string, PlatformOverride>;
   dispatch_timeout_minutes: number;
   /** directory holding SKILL.md folders; defaults to bundled orchestrator-agent/skills */
@@ -72,6 +84,19 @@ export function workspaceOf(root: string): string | undefined {
 export function childRepos(root: string): string[] {
   const entry = Object.entries(loadConfig().projects ?? {}).find(([k]) => sameRoot(k, root));
   return absChildren(root, entry?.[1]);
+}
+
+/** Settings for the checks after a write session; the repo's value wins over the global one. */
+export function repoSettings(root: string): { tests_first: boolean; scope_check: ScopeCheck; scope_allow: string[]; test_command: string | null } {
+  const cfg = loadConfig();
+  const p = projectConfig(root);
+  const mode = p?.scope_check ?? cfg.scope_check ?? "warn";
+  return {
+    tests_first: p?.tests_first ?? cfg.tests_first ?? false,
+    scope_check: ["off", "warn", "fail"].includes(mode) ? mode : "warn",
+    scope_allow: [...(cfg.scope_allow ?? []), ...(p?.scope_allow ?? [])],
+    test_command: p?.test_command ?? null,
+  };
 }
 
 export const DEFAULT_BRANCH_PATTERN = "story/{key}";

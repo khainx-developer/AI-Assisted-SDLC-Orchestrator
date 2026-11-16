@@ -112,6 +112,22 @@ const renderBlock = (qs: OpenQuestion[]) => [
   "",
 ];
 
+/**
+ * Add one new open question to a document (creating the section if there is none). The id continues after the highest Q number
+ * anywhere in the document, including ones already moved to Decisions, so ids stay unique. Returns the new document and the id.
+ */
+export function addOpenQuestion(markdown: string, question: string, why?: string): { markdown: string; id: string } {
+  const lines = markdown.split(/\r?\n/);
+  const block = findBlock(lines);
+  const qs = block ? parseBody(block.body, block.legacy) : [];
+  const highest = Math.max(qs.length, ...[...markdown.matchAll(/\*\*Q(\d+)\.\*\*/g)].map((m) => Number(m[1])));
+  const id = `Q${highest + 1}`;
+  const next = [...qs, { id, question: question.replace(/\s*\r?\n\s*/g, " ").trim(), why: why ?? null, suggested: null }];
+  if (block) lines.splice(block.start, block.end - block.start, ...renderBlock(next));
+  else lines.push("", ...renderBlock(next));
+  return { markdown: lines.join("\n").replace(/\n{3,}/g, "\n\n"), id };
+}
+
 export interface Answer { id: string; answer: string }
 
 /**

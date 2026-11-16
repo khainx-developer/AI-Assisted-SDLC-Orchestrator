@@ -81,7 +81,7 @@ resume PROJ-123         also works with a task id or PR number
 1. The orchestrator triages it. A small, reversible change skips straight to implementation. A risky, breaking or vague one goes through **requirement → design → plan**.
 2. Each analysis stage runs in a read-only worker session and produces an **artifact**. You read it, answer its open questions, and **confirm** or **revise** it (revisions are stored as new versions).
 3. A risky **plan** stops at an approval gate. Implementation is refused until you say "approve the plan".
-4. Implementation runs on a `story/<id>` branch (never `main`), then tests, then review.
+4. Implementation runs on a `story/<id>` branch (never `main`), then tests, then review. Optionally the tests are written first and frozen, and changes outside the plan are flagged ([details](#tests-first-scope-and-wrong-specs)).
 5. If it says work is still running, say `check status`.
 
 **See artifacts**: ask in chat ("show the plan"), or from a terminal (see Commands). **Remove a story**: say `remove 2` (it asks you to confirm; `cancel` keeps the history, `remove` deletes it permanently).
@@ -169,6 +169,22 @@ Routing example: orchestrate from Copilot CLI, analysis on Claude, coding on Cop
   "projects": { "D:/work/Legacy": { "coding_platform": "cursor", "test_command": "npm test" } }
 }
 ```
+
+### Tests first, scope and wrong specs
+
+Three checks on the implementation stage. They are enforced by the dispatch server after each session, not by asking the AI nicely.
+
+**Scope.** The plan's "Files touched" is the allowed scope of the coding session. Files it changes outside that list are reported to you. Set what happens in `config.json` (global, or per repo under `projects`):
+```json
+{ "scope_check": "warn", "projects": { "D:/work/ProjectA": { "scope_check": "fail", "scope_allow": ["package-lock.json", "docs/**"] } } }
+```
+`warn` (default) lets the work finish and shows you the extra files so you can keep them, revert them or revise the plan; `fail` fails the dispatch; `off` skips the check. `scope_allow` takes files, directories or globs that are always fine.
+
+**Tests first (optional, off by default).** One extra AI session writes the failing tests from the plan's Test Plan before any code exists. The server checks they fail for the right reason, then freezes them: the coding session must make them pass and cannot edit them (a change fails the dispatch, with the original saved aside). It costs roughly one extra session per task, so it is worth it for bug fixes, logic, parsing, validation, API contracts and risky changes, and not for refactors, UI, config, docs or small edits. Turn it on for a repo with `"tests_first": true`; otherwise the orchestrator only offers it as a numbered option when the task looks like a good fit. A smaller model is usually enough for this step (the orchestrator can pass `model` for it).
+
+**Wrong specs.** If a coding session finds that the plan (or design, or requirement) itself cannot be right, it says so instead of working around it. The task goes back to that stage with the problem added as an open question, you answer it, and the revised plan needs approval again. A task can be sent back twice by default (`max_spec_wrong_returns` in `policy.json`), then the orchestrator asks you.
+
+After updating, re-run `node dist/cli.js install --target <your tool>` (the system prompt is copied into the agent file) and reload your tool. An existing `policy.json` needs no edit: the new policy fields have defaults.
 
 ## Troubleshooting
 

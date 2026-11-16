@@ -119,3 +119,25 @@ test("service: get_open_questions / answer_open_questions round trip makes a new
   assert.equal(wf.openQuestions(t.task_id).count, 0);
   assert.match(wf.getArtifact(t.task_id, "requirement", 1).content, /Q1\.\*\* Should tool messages/, "v1 keeps the original questions");
 });
+
+const { addOpenQuestion } = await import("../workflow-state/questions.js");
+
+test("addOpenQuestion: continues the numbering past decided questions, keeps the existing ones, and creates the section if missing", () => {
+  const decided = "# Plan\n\n## Decisions\n- **Q1.** old → yes *(decided by the user)*\n- **Q2.** older → no *(decided by the user)*\n\n## Open Questions\nNone.\n";
+  const a = addOpenQuestion(decided, "Does step 2 hold?", "it blocks coding");
+  assert.equal(a.id, "Q3");
+  assert.deepEqual(parseOpenQuestions(a.markdown).map((q) => [q.id, q.question, q.why]), [["Q3", "Does step 2 hold?", "it blocks coding"]]);
+  assert.match(a.markdown, /## Decisions/);
+
+  const withOne = "# Req\n\n## Open Questions\n- **Q1.** first?\n  - Why it matters: w\n  - Suggested default: yes\n";
+  const b = addOpenQuestion(withOne, "second?\nacross lines");
+  assert.equal(b.id, "Q2");
+  const qs = parseOpenQuestions(b.markdown);
+  assert.deepEqual(qs.map((q) => q.id), ["Q1", "Q2"]);
+  assert.equal(qs[0].suggested, "yes", "the existing question is untouched");
+  assert.equal(qs[1].question, "second? across lines", "newlines in the issue are folded so the list stays valid");
+
+  const none = addOpenQuestion("# Plan\n\n## Steps\n1. a\n", "new?");
+  assert.equal(none.id, "Q1");
+  assert.match(none.markdown, /## Steps[\s\S]*## Open Questions\n- \*\*Q1\.\*\* new\?/);
+});

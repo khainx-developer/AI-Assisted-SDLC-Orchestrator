@@ -23,6 +23,10 @@ export const PolicySchema = z
     requires_human_approval: z.array(Gate),
     max_test_retries: z.number().int().min(0),
     max_dispatch_retries: z.number().int().min(0),
+    /** stages a task may be sent back to when implementation proves the spec wrong (report_spec_wrong); defaults keep older policy.json files valid */
+    spec_wrong_return_to: z.array(z.string()).default(["requirement", "design", "plan"]),
+    /** how many times one task may be sent back that way before it needs a human decision */
+    max_spec_wrong_returns: z.number().int().min(0).default(2),
     sync_jira_status: z.boolean(),
     jira_checkpoints: z.record(z.string(), z.string()),
   })
@@ -37,6 +41,7 @@ export const PolicySchema = z
     for (const s of [...p.terminal_stages, ...p.heavy_pipeline, p.light_start_stage, p.heavy_start_stage])
       if (!known.has(s)) bad(`unknown stage '${s}' referenced`);
     for (const g of p.requires_human_approval) if (!known.has(g.stage)) bad(`gate: unknown stage '${g.stage}'`);
+    for (const s of p.spec_wrong_return_to) if (!known.has(s)) bad(`spec_wrong_return_to: unknown stage '${s}'`);
   });
 export type Policy = z.infer<typeof PolicySchema>;
 

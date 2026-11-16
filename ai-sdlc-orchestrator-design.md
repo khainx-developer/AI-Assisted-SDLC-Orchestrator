@@ -314,6 +314,16 @@ Two distinct multi-repo needs, handled differently — don't conflate them:
 
 For Need B, coordinated release matters: you don't want the backend child merged days before the frontend child if they must ship together. Add a `coordinated_release: true` flag on the parent task (set by `task-breakdown` when it detects this case) — policy then requires *all* children to reach `review`/approved before *any* child is allowed to transition past review. The orchestrator checks `list_child_tasks(parent_task_id)` at that gate rather than treating each child as fully independent.
 
+### 6.8 Write-session guards: scope, tests first, wrong specs
+
+Three controls on the implementation stage. All are enforced by the dispatch server after the session, not by trusting the prompt, in the same way the read-only check (§5.2) does not trust an analysis session.
+
+**Scope.** `dispatch_coding_task(target_files)` is the plan's "Files touched" (files, directories or globs). The runner records the dirty files and their content hashes before the session, and after it compares: only files whose content changed during *this* session are judged, so earlier attempts and frozen tests are not blamed on it. Files outside the scope come back as `scope_violation`. `scope_check` in `config.json` (global, per repo) is `warn` (default: the dispatch succeeds, the orchestrator shows the list and offers keep / revert / revise the plan), `fail` (the dispatch fails) or `off`. `scope_allow` lists paths always allowed, e.g. lockfiles. `warn` is the default because the plan's file list is an estimate made before the code exists, and a hard failure over one extra helper file would burn a retry for nothing.
+
+**Tests first (optional).** Writing tests and code in one session lets the model fit the tests to its code. With `tests_first` (per repo, default off) or when the human accepts the orchestrator's offer, implementation becomes: `dispatch_test_authoring_task` (writes only tests, from the plan's Test Plan; files outside `test_paths` are flagged, e.g. stubs) → `run_tests(expect_fail)` → `dispatch_coding_task(frozen_from_dispatch)`. The tests are frozen: their content is hashed and copied aside when the coding session starts, and a change, rename or deletion fails the dispatch with `frozen_test_violation`, with the original kept in `frozen_backup`. A test that cannot be right is reported as `spec_wrong`, not edited. The red check classifies the run from its output: `red` (ran and failed), `vacuous` (passed: checks nothing new), `broken` (import / compile / nothing collected). It is a heuristic, so the human can overrule it. The cost is one extra session; it is offered for bug fixes with a reproducible failure, logic, parsing, validation, contracts and risky changes, and not for refactors, UI, config, docs or small changes. `duration_ms` and `prompt_chars` are recorded on every dispatch so the real cost can be read from `dispatches/*/meta.json` after a few stories.
+
+**Spec proven wrong.** The `sdlc-result` block has `spec_wrong` and `spec_issue`. The runner marks such a dispatch unsuccessful, and the orchestrator calls `report_spec_wrong(task_id, dispatch_id, return_to)`. The workflow server logs an edge case, appends the issue to the target document's Open Questions as a new version (which also voids a plan approval, §6.5), and moves the task back. This is not a retry: it does not use `max_test_retries`, and `implementation -> plan` is not needed in `transitions` because `spec_wrong_return_to` in `policy.json` lists the allowed targets (default requirement, design, plan). `max_spec_wrong_returns` (default 2) stops a task bouncing forever; past it the orchestrator must ask the human.
+
 ## 7. Agent entry points (invocation modes)
 
 The orchestrator is invoked one way, with a mode discriminator — not as three separate agents.
@@ -523,6 +533,8 @@ ai-sdlc-orchestrator/
 ```
 
 ## 12. Build order (suggested) and status
+
+**Added later (tested with the fake CLI):** write-session guards §6.8: scope check, optional tests-first with frozen tests and the red check, `report_spec_wrong`.
 
 **Built and unit-tested (steps 1, 3-7 in code, 11 and 12 in the server, plus learnings §9.7, repo-instruction/learnings injection §5.2, zero-hit search log §9.6, `duration_ms` and learnings backup):** workflow-state server (policy validation, gates incl. auto-approve, heavy-pipeline enforcement, retry cap, in-flight guard, coordinated release, FTS5 search, daily backup), dispatch server with claude/copilot/cursor/custom adapters, read-only verification, branch handling, skills and system prompt. Tests use a fake CLI; **the real `claude`, `copilot` and `cursor-agent` flag sets in §5.4 have not been run against the actual tools yet.** Do that first on a throwaway repo (step 2) and adjust `extra_args` as needed. Not built: GitHub/Jira wiring (reused MCP servers, configured in the client), the polling loop itself (the host calls `check_gates` and `get_dispatch_result` per the system prompt), Jira status sync.
 

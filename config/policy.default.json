@@ -20,6 +20,8 @@
   ],
   "max_test_retries": 3,
   "max_dispatch_retries": 2,
+  "spec_wrong_return_to": ["requirement", "design", "plan"],
+  "max_spec_wrong_returns": 2,
   "sync_jira_status": false,
   "jira_checkpoints": { "implementation": "In Progress", "review": "In Review", "done": "Done" }
 }

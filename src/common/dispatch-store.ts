@@ -7,7 +7,7 @@ export const metaFile = (id: string) => join(dispatchDir(id), "meta.json");
 
 export interface DispatchMeta {
   dispatch_id: string;
-  kind: "analysis" | "coding" | "test";
+  kind: "analysis" | "coding" | "test-authoring" | "test";
   task_id: string;
   platform: string;
   project_root: string;
@@ -34,6 +34,33 @@ export interface DispatchMeta {
   pr_number?: number | null;
   summary?: string;
   passed?: boolean;
+  /** size of the prompt sent, a rough cost signal next to duration_ms */
+  prompt_chars?: number;
+  /** write sessions: files whose content this session changed (files_changed is everything dirty afterwards) */
+  files_touched?: string[];
+  /** coding: this session says the plan/design/requirement is wrong; hand to report_spec_wrong */
+  spec_wrong?: boolean;
+  spec_issue?: string | null;
+  /** coding / test-authoring: files this session touched outside the declared scope, and the mode that applied */
+  scope_violation?: string[];
+  scope_check?: "warn" | "fail";
+  /** test-authoring: the test files to freeze; coding: the frozen files it was told not to edit */
+  frozen_files?: string[];
+  /** coding: frozen files it edited or deleted anyway (fails the dispatch); originals are copied to frozen_backup */
+  frozen_test_violation?: string[];
+  frozen_backup?: string;
+  /** test run: set when expect_fail was given. red = ran and failed, vacuous = passed, broken = could not run */
+  verdict?: "red" | "vacuous" | "broken";
+}
+
+/** The test files a finished test-authoring dispatch froze, for the coding dispatch that must not edit them. */
+export function frozenFilesFrom(task_id: string, dispatch_id: string): string[] {
+  const m = readDispatchMeta(dispatch_id);
+  if (m.kind !== "test-authoring") throw new Error(`dispatch ${dispatch_id} is a ${m.kind} dispatch, not test-authoring`);
+  if (m.task_id !== task_id) throw new Error(`dispatch ${dispatch_id} belongs to task ${m.task_id}, not ${task_id}`);
+  if (m.status !== "completed") throw new Error(`dispatch ${dispatch_id} is ${m.status}${m.error ? `: ${m.error}` : ""}; there are no tests to freeze yet`);
+  if (!m.frozen_files?.length) throw new Error(`dispatch ${dispatch_id} wrote no test files`);
+  return m.frozen_files;
 }
 
 export function readDispatchMeta(id: string): DispatchMeta {

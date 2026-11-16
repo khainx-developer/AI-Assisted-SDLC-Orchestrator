@@ -177,3 +177,77 @@ test("a database created before artifacts were files (content NOT NULL, no defau
   assert.equal(readFileSync(r.path, "utf8"), "# written on an old schema");
   assert.equal(wf.getArtifact(t.task_id, "requirement").content, "# written on an old schema");
 });
+
+// ---- spec proven wrong: implementation sends the task back ----
+
+const PLAN_DOC = "# Plan: retry\n\n## Steps\n1. `a.ts` - add retry\n\n## Open Questions\nNone.\n";
+
+function implementing(wf: InstanceType<typeof Workflow>, title: string) {
+  const t = wf.createTask({ project_root: "/spec", title, source: "adhoc", flags: risky });
+  for (const s of ["requirement", "design"]) wf.recordArtifact(t.task_id, s, `# ${s}`);
+  wf.recordArtifact(t.task_id, "plan", PLAN_DOC);
+  wf.transition(t.task_id, "plan", "x");
+  wf.approve(t.task_id, "plan", "me");
+  wf.transition(t.task_id, "implementation", "go");
+  return t.task_id;
+}
+
+test("report_spec_wrong sends the task back, records the issue as an open question, voids the plan approval and logs an edge case", () => {
+  const wf = new Workflow();
+  const id = implementing(wf, "sw1");
+  const r = wf.reportSpecWrong(id, "Step 1 adds retry in a.ts but a.ts has no network call", "plan", "grep shows the call lives in b.ts");
+  assert.equal(r.returned_to, "plan");
+  assert.equal(r.question_id, "Q1");
+  assert.equal(wf.getTask(id).stage, "plan");
+  const plan = wf.getArtifact(id, "plan");
+  assert.equal(plan.version, 2, "a new version, the old one is kept");
+  assert.match(plan.content, /\*\*Q1\.\*\* \[Raised during implementation\] Step 1 adds retry/);
+  assert.match(plan.content, /Evidence: grep shows the call lives in b\.ts/);
+  assert.equal(wf.openQuestions(id, "plan").count, 1);
+  assert.match(r.display, /sent back to plan/);
+  assert.throws(() => wf.transition(id, "implementation", "again"), /requires human approval/, "the revised plan has to be approved again");
+  assert.equal(wf.getTask(id).retry_count, 0, "not counted as a test retry");
+  assert.equal(wf.getTask(id).needs_attention, false);
+  const edge = wf.db.prepare("SELECT description, decision FROM edge_cases WHERE task_id=?").get(id) as any;
+  assert.match(edge.description, /Spec proven wrong during implementation/);
+  assert.equal(edge.decision, "Sent back to 'plan'");
+  assert.ok((wf.getTask(id).history as any[]).some((h) => h.reason.startsWith("spec_wrong:")));
+});
+
+test("report_spec_wrong is capped, only valid while implementing, and only to allowed stages", () => {
+  const wf = new Workflow();
+  updatePolicy({ max_spec_wrong_returns: 1 });
+  const id = implementing(wf, "sw2");
+  assert.throws(() => wf.reportSpecWrong(id, "x", "implementation"), /does not allow returning/);
+  assert.throws(() => wf.reportSpecWrong(id, "  ", "plan"), /issue is empty/);
+  wf.reportSpecWrong(id, "first problem", "plan");
+  assert.throws(() => wf.reportSpecWrong(id, "second", "plan"), /applies while implementing or testing/, "now back in plan");
+  wf.approve(id, "plan", "me");
+  wf.transition(id, "implementation", "go again");
+  assert.throws(() => wf.reportSpecWrong(id, "second problem", "plan"), /already sent back 1 time/);
+  updatePolicy({ max_spec_wrong_returns: 2 });
+  wf.setDispatch(id, "d_00000000", "in-flight");
+  assert.throws(() => wf.reportSpecWrong(id, "second problem", "plan"), /still in-flight/);
+});
+
+test("report_spec_wrong works from test, and for a light task with no earlier document", () => {
+  const wf = new Workflow();
+  const t = wf.createTask({ project_root: "/spec", title: "light", source: "adhoc", flags: light });
+  assert.equal(t.stage, "implementation");
+  wf.transition(t.task_id, "test", "coded");
+  const r = wf.reportSpecWrong(t.task_id, "the frozen test asserts a negative balance is allowed", "requirement");
+  assert.equal(r.question_id, null, "there is no requirement document to annotate");
+  assert.equal(wf.getTask(t.task_id).stage, "requirement");
+  assert.match(r.display, /no requirement document yet/);
+});
+
+test("a policy.json written before spec_wrong settings existed still validates and gets the defaults", async () => {
+  const { PolicySchema } = await import("../workflow-state/policy.js");
+  const { readFileSync } = await import("node:fs");
+  const old = JSON.parse(readFileSync(new URL("../../config/policy.default.json", import.meta.url), "utf8"));
+  delete old.spec_wrong_return_to; delete old.max_spec_wrong_returns;
+  const p = PolicySchema.parse(old);
+  assert.deepEqual(p.spec_wrong_return_to, ["requirement", "design", "plan"]);
+  assert.equal(p.max_spec_wrong_returns, 2);
+  assert.throws(() => PolicySchema.parse({ ...old, spec_wrong_return_to: ["nope"] }));
+});

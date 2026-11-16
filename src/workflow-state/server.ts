@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Workflow, WorkflowError } from "./service.js";
 import { readLearnings, writeLearning, removeLearning } from "../common/learnings.js";
-import { completedArtifact } from "../common/dispatch-store.js";
+import { completedArtifact, readDispatchMeta } from "../common/dispatch-store.js";
 import { updatePolicy, policyVersion } from "./policy.js";
 
 const wf = new Workflow();
@@ -84,6 +84,22 @@ server.tool(
     accept_suggested: z.array(z.string()).optional().describe("question ids, e.g. [\"Q1\",\"Q2\"], only when the user said to accept the suggestion"),
   },
   (a) => run(() => wf.answerQuestions(a.task_id, a.stage, a.answers ?? [], a.accept_suggested))
+);
+server.tool(
+  "report_spec_wrong",
+  "Send a task back because implementation proved an earlier document wrong (a coding dispatch result with spec_wrong=true, or a frozen test that cannot be satisfied). Pass the dispatch_id and omit `issue` to use the session's own spec_issue (do not copy it). Choose return_to: 'plan' if only the steps are wrong, 'design' if the approach is, 'requirement' if the goal itself is. The issue is added to that document's Open Questions as a new version (a plan approval is voided), the task moves back, and an edge case is logged. Capped by max_spec_wrong_returns. Print the returned `display` verbatim and wait for the human; never answer the question yourself.",
+  { task_id: tid, return_to: z.enum(["requirement", "design", "plan"]), dispatch_id: z.string().optional(), issue: z.string().optional(), evidence: z.string().optional() },
+  (a) => run(() => {
+    let issue = a.issue;
+    if (!issue && a.dispatch_id) {
+      const m = readDispatchMeta(a.dispatch_id);
+      if (m.task_id !== a.task_id) throw new Error(`dispatch ${a.dispatch_id} belongs to task ${m.task_id}, not ${a.task_id}`);
+      if (!m.spec_wrong) throw new Error(`dispatch ${a.dispatch_id} did not report a wrong spec`);
+      issue = m.spec_issue ?? undefined;
+    }
+    if (!issue) throw new Error("give dispatch_id of a spec_wrong dispatch, or issue text");
+    return wf.reportSpecWrong(a.task_id, issue, a.return_to, a.evidence);
+  })
 );
 server.tool(
   "record_edge_case", "Log a decision made by judgment because no policy rule matched.",

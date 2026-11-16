@@ -6,7 +6,7 @@ import { dataDir, normRoot } from "../common/paths.js";
 import { branchName } from "../common/config.js";
 import { loadPolicy, policyVersion, type Policy } from "./policy.js";
 import { SCHEMA } from "./schema.js";
-import { parseOpenQuestions, renderGuidance, applyAnswers, type Answer, type OpenQuestion } from "./questions.js";
+import { parseOpenQuestions, renderGuidance, applyAnswers, addOpenQuestion, type Answer, type OpenQuestion } from "./questions.js";
 
 export interface Flags {
   files_affected: number;
@@ -240,6 +240,52 @@ export class Workflow {
       .prepare("INSERT INTO transitions (task_id,from_stage,to_stage,reason,policy_version,created_at) VALUES (?,?,?,?,?,?)")
       .run(task_id, t.stage, next, reason, policyVersion(pol), ts);
     return this.getTask(task_id);
+  }
+
+  /**
+   * Implementation (or its tests) proved an earlier document wrong. Sends the task back to `return_to`, writes the issue into that
+   * document's Open Questions as a new version (which also voids any plan approval), and logs an edge case. Not a retry: it does
+   * not use max_test_retries. Capped by max_spec_wrong_returns so a task cannot bounce between stages forever.
+   */
+  reportSpecWrong(task_id: string, issue: string, return_to: string, evidence?: string) {
+    const t = this.shape(this.row(task_id));
+    const pol = this.policy();
+    if (!issue.trim()) throw new WorkflowError("issue is empty: say what is wrong and where");
+    if (t.stage !== "implementation" && t.stage !== "test") throw new WorkflowError(`report_spec_wrong applies while implementing or testing; task is in '${t.stage}'`);
+    if (!pol.spec_wrong_return_to.includes(return_to)) throw new WorkflowError(`policy does not allow returning to '${return_to}' (allowed: ${pol.spec_wrong_return_to.join(", ")})`);
+    if (t.dispatch_status === "in-flight") throw new WorkflowError(`dispatch ${t.dispatch_id} is still in-flight`);
+    const prior = (this.db.prepare("SELECT COUNT(*) AS n FROM transitions WHERE task_id=? AND reason LIKE 'spec_wrong:%'").get(task_id) as any).n as number;
+    if (prior >= pol.max_spec_wrong_returns)
+      throw new WorkflowError(`this task was already sent back ${prior} time(s) (max_spec_wrong_returns=${pol.max_spec_wrong_returns}); stop and ask the human how to proceed (mark needs_attention, revise the spec by hand, or cancel)`);
+
+    const detail = evidence?.trim() ? `${issue.trim()} Evidence: ${evidence.trim()}` : issue.trim();
+    this.recordEdgeCase(task_id, `Spec proven wrong during ${t.stage}: ${issue.trim()}`, `Sent back to '${return_to}'`, `A ${t.stage} session reported that the ${return_to} cannot be implemented as written. ${evidence?.trim() ?? ""}`.trim());
+
+    let question: { id: string; version: number; path: string } | null = null;
+    const has = this.db.prepare("SELECT 1 FROM stage_artifacts WHERE task_id=? AND stage=?").get(task_id, return_to);
+    if (has) {
+      const a = this.getArtifact(task_id, return_to);
+      const r = addOpenQuestion(a.content, `[Raised during ${t.stage}] ${detail}`, `The ${t.stage} session found this ${return_to} cannot be implemented as written; it needs a decision or a revised ${return_to}.`);
+      const rec = this.recordArtifact(task_id, return_to, r.markdown, [{ stage: return_to, version: a.version }], undefined, "spec-wrong-handoff");
+      question = { id: r.id, version: rec.version, path: rec.path };
+    }
+
+    const ts = now();
+    this.db.prepare("UPDATE tasks SET stage=?, stage_entered_at=?, updated_at=? WHERE task_id=?").run(return_to, ts, ts, task_id);
+    this.db.prepare("INSERT INTO transitions (task_id,from_stage,to_stage,reason,policy_version,created_at) VALUES (?,?,?,?,?,?)")
+      .run(task_id, t.stage, return_to, `spec_wrong: ${issue.trim().slice(0, 300)}`, policyVersion(pol), ts);
+
+    const display = [
+      `Task ${task_id} sent back to ${return_to}: the ${t.stage} work found the ${return_to} cannot be implemented as written.`,
+      "", `Issue: ${detail}`,
+      question ? `Recorded as ${question.id} in ${return_to} v${question.version} (${question.path}).` : `There is no ${return_to} document yet, so pass the issue to the ${return_to} stage as input.`,
+      "", "Options:",
+      `1. answer ${question?.id ?? "the question"}   tell me the decision, I record it; or revise the ${return_to} if the answer changes the approach`,
+      `2. show full text   print the ${return_to} document`,
+      `3. check the code so far   the branch keeps the partial work; tell me whether to keep or discard it`,
+      `4. cancel task   stop here, keeping history`,
+    ].join(String.fromCharCode(10));
+    return { task: this.getTask(task_id), returned_to: return_to, question_id: question?.id ?? null, display };
   }
 
   recordArtifact(task_id: string, stage: string, content: string, input_refs?: object[], skill_version?: string, platform?: string) {

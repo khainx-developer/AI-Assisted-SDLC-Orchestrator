@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig, projectConfig } from "../common/config.js";
+import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
+import { frozenFilesFrom } from "../common/dispatch-store.js";
 import { projectRepos, requireGitRepo } from "../common/target.js";
 import { PLATFORMS, resolvePlatform } from "./platforms.js";
-import { analysisPrompt, codingPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
+import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, ensureBranch, detectTestCommand } from "./runner.js";
@@ -64,40 +65,72 @@ server.tool(
 );
 
 server.tool(
-  "dispatch_coding_task",
-  "Start a read+write coding session on the chosen AI platform, on the task's branch (created if missing; never main). The session follows the repo's own agent/skill conventions. Returns a dispatch_id immediately; poll get_dispatch_result.",
+  "get_repo_settings",
+  "Per-repo switches for the write sessions: tests_first (write failing tests in a separate session and freeze them), scope_check (off | warn | fail: what happens when a coding session touches files outside the plan's scope), scope_allow (extra always-allowed paths) and the test command. Read once before the implementation stage.",
+  { project_root: z.string() },
+  (a) => run(() => repoSettings(a.project_root))
+);
+
+server.tool(
+  "dispatch_test_authoring_task",
+  "Start a read+write session that writes ONLY the failing tests for a task, from the plan's Test Plan, before any production code exists (the optional tests-first step of implementation). Same branch rules as dispatch_coding_task. When it completes, `frozen_files` lists the test files to freeze; then run_tests with expect_fail=true and check `verdict` is red, and pass this dispatch_id as frozen_from_dispatch to dispatch_coding_task. Returns a dispatch_id immediately; poll get_dispatch_result.",
   {
-    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default story/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
-    instructions: z.string(), target_files: z.array(z.string()).optional(), additional_read_roots: z.array(z.string()).optional(),
-    platform: platformArg, model: z.string().optional(),
+    task_id: z.string(), project_root: z.string(), branch: z.string().describe("use `branch` from get_task_state"),
+    instructions: z.string().describe("the plan's Test Plan and the requirement's acceptance criteria; the repo's test conventions are found by the session itself"),
+    test_paths: z.array(z.string()).optional().describe("where tests belong (files, dirs or globs). Files written elsewhere are reported as scope_violation; those inside become the frozen set"),
+    additional_read_roots: z.array(z.string()).optional(), platform: platformArg, model: z.string().optional().describe("a smaller model is usually enough for this step"),
   },
   (a) => run(async () => {
-    if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch coding work onto main/master");
+    if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch work onto main/master");
     requireGitRepo(a.project_root);
     await ensureBranch(a.project_root, a.branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
-      kind: "coding", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files, learnings: learningsText(a.project_root) }) },
+      kind: "test-authoring", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch, testPaths: a.test_paths,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status };
   })
 );
 
 server.tool(
-  "run_tests", "Run the repo's test command (config.json projects.<root>.test_command, else auto-detected). Returns a dispatch_id; result has passed + output tail.",
-  { task_id: z.string(), project_root: z.string() },
+  "dispatch_coding_task",
+  "Start a read+write coding session on the chosen AI platform, on the task's branch (created if missing; never main). The session follows the repo's own agent/skill conventions. `target_files` is the plan's allowed scope: files this session touches outside it come back as scope_violation (a warning unless the repo's scope_check is fail). Pass frozen_from_dispatch after a test-authoring step: those tests are frozen and editing one fails the dispatch (frozen_test_violation). If the session finds the plan itself is wrong it returns spec_wrong + spec_issue: hand that to report_spec_wrong (workflow-state), do not retry. Returns a dispatch_id immediately; poll get_dispatch_result.",
+  {
+    task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default story/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
+    instructions: z.string(), target_files: z.array(z.string()).optional().describe("the plan's 'Files touched': files, directories or globs this session may change"),
+    additional_read_roots: z.array(z.string()).optional(),
+    frozen_from_dispatch: z.string().optional().describe("dispatch_id of a completed dispatch_test_authoring_task of this task; its test files are frozen"),
+    platform: platformArg, model: z.string().optional(),
+  },
+  (a) => run(async () => {
+    if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch coding work onto main/master");
+    requireGitRepo(a.project_root);
+    const frozenFiles = a.frozen_from_dispatch ? frozenFilesFrom(a.task_id, a.frozen_from_dispatch) : undefined;
+    await ensureBranch(a.project_root, a.branch);
+    const roots = a.additional_read_roots ?? [];
+    const m = await startAgentDispatch({
+      kind: "coding", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch, targetFiles: a.target_files, frozenFiles,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root) }) },
+    });
+    return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, frozen_files: frozenFiles ?? [] };
+  })
+);
+
+server.tool(
+  "run_tests", "Run the repo's test command (config.json projects.<root>.test_command, else auto-detected). Returns a dispatch_id; result has passed + output tail + duration_ms. With expect_fail=true (after a test-authoring step) the result also has `verdict`: red = the tests ran and failed (what you want before the code exists), vacuous = they passed so they check nothing new, broken = the suite could not run (import/compile error, nothing collected). Heuristic on the output: show it to the human, do not decide alone.",
+  { task_id: z.string(), project_root: z.string(), expect_fail: z.boolean().optional() },
   (a) => run(() => {
     requireGitRepo(a.project_root);
     const cmd = detectTestCommand(a.project_root);
     if (!cmd) throw new Error(`no test command detected for ${a.project_root}; set projects."<root>".test_command in config.json`);
-    const m = startTestDispatch(a.task_id, a.project_root, cmd);
+    const m = startTestDispatch(a.task_id, a.project_root, cmd, a.expect_fail ?? false);
     return { dispatch_id: m.dispatch_id, command: cmd, status: m.status };
   })
 );
 
 server.tool(
-  "get_dispatch_result", "Status and outcome of a dispatch. status in-flight | completed | failed. Coding results include files_changed, success, needs_clarification/question, pr_number; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
+  "get_dispatch_result", "Status and outcome of a dispatch. status in-flight | completed | failed. Coding results include files_changed (everything dirty) and files_touched (what this session changed), success, needs_clarification/question, pr_number, spec_wrong/spec_issue, scope_violation and frozen_test_violation; test-authoring results include frozen_files; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
   { dispatch_id: z.string(), include_raw: z.boolean().optional() },
   (a) => run(() => {
     const { output, ...rest } = getDispatch(a.dispatch_id);

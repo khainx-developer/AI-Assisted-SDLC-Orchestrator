@@ -4,9 +4,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, extname, dirname, relative } from "node:path";
 import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
-import { loadConfig, projectConfig } from "../common/config.js";
+import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
 import { resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
+import { porcelainPath, pathAllowed, outsideScope, hashFiles, touchedSince, snapshotFrozen, frozenViolations, classifyTestRun } from "./guards.js";
 
 const execFileP = promisify(execFile);
 
@@ -18,8 +19,21 @@ export async function git(cwd: string, ...args: string[]) {
   const { stdout } = await execFileP("git", args, { cwd });
   return stdout.trim();
 }
+/** `git status --porcelain` lines, untouched (the git() helper trims, which would eat the leading space of the first entry). */
+async function statusLines(cwd: string, ...extra: string[]): Promise<string[]> {
+  try {
+    const { stdout } = await execFileP("git", ["status", "--porcelain", ...extra], { cwd, maxBuffer: 64 * 1024 * 1024 });
+    return stdout.split(String.fromCharCode(10)).map((l) => l.trimEnd()).filter(Boolean);
+  } catch { return []; }
+}
+
 async function porcelain(cwd: string): Promise<string[]> {
-  try { return (await git(cwd, "status", "--porcelain")).split("\n").filter(Boolean).map((l) => l.slice(3)); } catch { return []; }
+  return (await statusLines(cwd)).map((l) => l.slice(3));
+}
+
+/** Every dirty file, untracked ones listed one by one (not collapsed to their folder), as paths relative to `cwd`. */
+export async function changedFiles(cwd: string): Promise<string[]> {
+  return (await statusLines(cwd, "--untracked-files=all")).map(porcelainPath);
 }
 
 /** Dirty files across repos, as paths relative to `root` (unprefixed for the root repo itself). */
@@ -60,7 +74,7 @@ function resolveExe(cmd: string): string {
 }
 
 interface StartArgs {
-  kind: "analysis" | "coding";
+  kind: "analysis" | "coding" | "test-authoring";
   task_id: string;
   platformId: string;
   req: Omit<DispatchRequest, "promptFile" | "mode">;
@@ -68,6 +82,12 @@ interface StartArgs {
   branch?: string;
   /** repos whose dirty files an analysis session is checked against (a workspace has several); defaults to [req.projectRoot] */
   repos?: string[];
+  /** coding: the plan's files/dirs/globs. Files this session touches outside them are reported (see scope_check in config) */
+  targetFiles?: string[];
+  /** coding: frozen test files this session must not change; a change fails the dispatch */
+  frozenFiles?: string[];
+  /** test-authoring: where the tests belong; the touched files inside become the frozen set, any others are scope violations */
+  testPaths?: string[];
 }
 
 export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
@@ -84,16 +104,24 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   if (via === "arg" && isShim) via = "file"; // shims go through cmd.exe, where multi-line args cannot be quoted safely
   const promptArg = via === "file" ? `Read the file ${promptFile} and follow the instructions in it exactly.` : a.req.prompt;
 
-  const req: DispatchRequest = { ...a.req, mode: a.kind, promptFile };
+  const writes = a.kind !== "analysis";
+  const req: DispatchRequest = { ...a.req, mode: writes ? "coding" : "analysis", promptFile };
   const inv = platform.build(req, override, promptArg);
   const root = a.req.projectRoot;
   const repos = a.repos ?? [root];
   const before = a.kind === "analysis" ? await porcelainAll(root, repos) : [];
+  // write sessions: remember what was already dirty (earlier attempts, frozen tests) so only THIS session's changes are judged
+  const dirtyBefore = writes ? await changedFiles(root) : [];
+  const hashesBefore = writes ? hashFiles(root, dirtyBefore) : {};
+  const settings = repoSettings(root);
+  const frozenSnapshot = a.frozenFiles?.length ? snapshotFrozen(root, a.frozenFiles, join(dispatchDir(id), "frozen")) : null;
 
   const meta: DispatchMeta = {
     dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: root,
     status: "in-flight", started_at: new Date().toISOString(), skill_version: a.skill_version, branch: a.branch,
+    prompt_chars: a.req.prompt.length,
   };
+  if (frozenSnapshot) { meta.frozen_files = a.frozenFiles; meta.frozen_backup = join(dispatchDir(id), "frozen"); }
   const child = spawn(exe, inv.args, { cwd: a.req.projectRoot, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   meta.pid = child.pid;
   save(meta);
@@ -113,18 +141,40 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     meta.output = text;
     meta.stderr_tail = err.slice(-2000);
     if (spawnErr) meta.error = `could not start '${exe}': ${spawnErr.message}`;
-    const after = a.kind === "analysis" ? await porcelainAll(root, repos) : await porcelain(a.req.projectRoot);
     if (a.kind === "analysis") {
+      const after = await porcelainAll(root, repos);
       meta.artifact = extractArtifact(text);
       const added = after.filter((f) => !before.includes(f));
       if (added.length) meta.read_only_violation = added; // platform could not (or did not) keep the session read-only
     } else {
+      const after = await changedFiles(root);
+      const touched = touchedSince(root, hashesBefore, after);
       meta.files_changed = after;
+      meta.files_touched = touched;
       const r = parseCodingResult(text);
-      if (r) { Object.assign(meta, { success: r.success, summary: r.summary, needs_clarification: r.needs_clarification, question: r.question, pr_number: r.pr_number }); }
-      else { meta.success = code === 0; meta.summary = "(no sdlc-result block in output; inferred from exit code)"; }
+      if (r) {
+        Object.assign(meta, { success: r.success, summary: r.summary, needs_clarification: r.needs_clarification, question: r.question, pr_number: r.pr_number });
+        if (r.spec_wrong) Object.assign(meta, { spec_wrong: true, spec_issue: r.spec_issue ?? "(the session reported a wrong spec but gave no detail)", success: false });
+      } else { meta.success = code === 0; meta.summary = "(no sdlc-result block in output; inferred from exit code)"; }
+
+      const mode = settings.scope_check;
+      if (a.kind === "coding") {
+        if (frozenSnapshot) {
+          const bad = frozenViolations(root, frozenSnapshot);
+          if (bad.length) meta.frozen_test_violation = bad;
+        }
+        const frozen = new Set(a.frozenFiles ?? []);
+        const out = mode === "off" ? [] : outsideScope(touched.filter((f) => !frozen.has(f)), a.targetFiles?.length ? [...a.targetFiles, ...settings.scope_allow] : []);
+        if (out.length) { meta.scope_violation = out; meta.scope_check = mode === "fail" ? "fail" : "warn"; }
+      } else {
+        const inScope = a.testPaths?.length ? touched.filter((f) => pathAllowed(f, a.testPaths!)) : touched;
+        meta.frozen_files = inScope;
+        if (!inScope.length && !meta.spec_wrong && !meta.needs_clarification && !meta.error) meta.error = "test-authoring session wrote no test files";
+        const out = mode === "off" || !a.testPaths?.length ? [] : touched.filter((f) => !pathAllowed(f, [...a.testPaths!, ...settings.scope_allow]));
+        if (out.length) { meta.scope_violation = out; meta.scope_check = mode === "fail" ? "fail" : "warn"; }
+      }
     }
-    meta.status = code === 0 && !meta.error && !meta.read_only_violation ? "completed" : "failed";
+    meta.status = code === 0 && !meta.error && !meta.read_only_violation && !meta.frozen_test_violation && meta.scope_check !== "fail" ? "completed" : "failed";
     save(meta);
   };
   child.on("error", (e) => void finish(null, e));
@@ -147,7 +197,7 @@ function readdirHas(dir: string, re: RegExp) {
   try { return readdirSync(dir).some((f: string) => re.test(f)); } catch { return false; }
 }
 
-export function startTestDispatch(task_id: string, root: string, command: string): DispatchMeta {
+export function startTestDispatch(task_id: string, root: string, command: string, expectFail = false): DispatchMeta {
   const id = `d_${randomUUID().slice(0, 8)}`;
   mkdirSync(dispatchDir(id), { recursive: true });
   const meta: DispatchMeta = { dispatch_id: id, kind: "test", task_id, platform: "shell", project_root: root, status: "in-flight", started_at: new Date().toISOString() };
@@ -159,10 +209,12 @@ export function startTestDispatch(task_id: string, root: string, command: string
   child.stderr.on("data", (d) => (out += d));
   const finish = (code: number | null, e?: Error) => {
     meta.finished_at = new Date().toISOString();
+    meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
     meta.exit_code = code;
     meta.output = out.slice(-8000);
     meta.passed = code === 0;
     if (e) meta.error = e.message;
+    if (expectFail) meta.verdict = e ? "broken" : classifyTestRun(code === 0, out);
     meta.status = code === 0 ? "completed" : "failed";
     save(meta);
   };
