@@ -1,4 +1,5 @@
 import type { PlatformOverride } from "../common/config.js";
+import { dirname } from "node:path";
 
 /**
  * A platform adapter turns a platform-neutral request into one headless CLI invocation of that
@@ -103,6 +104,13 @@ const generic: Platform = {
 };
 
 export const PLATFORMS: Record<string, Platform> = { claude, copilot, cursor, generic };
+
+export function promptAccessRequest(req: DispatchRequest, platform: Platform, promptVia: "stdin" | "arg" | "file"): DispatchRequest {
+  if (promptVia !== "file" || !platform.supportsAddDir) return req;
+  const promptDir = dirname(req.promptFile);
+  if (req.extraReadRoots.includes(promptDir)) return req;
+  return { ...req, extraReadRoots: [...req.extraReadRoots, promptDir] };
+}
 
 /** Resolve a configured platform id. Any id in config.json that is not built in is treated as `generic`. */
 export function resolvePlatform(id: string, cfgPlatforms: Record<string, PlatformOverride>): { platform: Platform; override: PlatformOverride } {

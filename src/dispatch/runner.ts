@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 
 import { join, extname, dirname, relative } from "node:path";
 import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
 import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
-import { resolvePlatform, type DispatchRequest } from "./platforms.js";
+import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 import { porcelainPath, pathAllowed, outsideScope, hashFiles, touchedSince, snapshotFrozen, frozenViolations, classifyTestRun } from "./guards.js";
 
@@ -107,7 +107,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const promptArg = via === "file" ? `Read the file ${promptFile} and follow the instructions in it exactly.` : a.req.prompt;
 
   const writes = a.kind !== "analysis";
-  const req: DispatchRequest = { ...a.req, mode: writes ? "coding" : "analysis", promptFile };
+  const req = promptAccessRequest({ ...a.req, mode: writes ? "coding" : "analysis", promptFile }, platform, via);
   const inv = platform.build(req, override, promptArg);
   const root = a.req.projectRoot;
   const repos = a.repos ?? [root];

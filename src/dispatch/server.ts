@@ -25,7 +25,7 @@ function pickPlatform(mode: "analysis" | "coding", root: string, explicit?: stri
   return explicit ?? (mode === "analysis" ? proj?.analysis_platform ?? proj?.platform ?? cfg.analysis_platform : proj?.coding_platform ?? proj?.platform ?? cfg.coding_platform) ?? cfg.default_platform;
 }
 
-const platformArg = z.string().optional().describe("AI platform for this dispatch (claude | copilot | cursor | any id declared in config.json). Omit to use configured routing.");
+const platformArg = z.string().nullish().describe("AI platform for this dispatch (claude | copilot | cursor | any id declared in config.json). Omit or pass null to use configured routing.");
 
 server.tool(
   "list_projects", "Repos registered in the global config (sdlc-orchestrator repos / install --repo), with per-repo overrides. Use to let the user pick a repo.", {},
@@ -57,7 +57,7 @@ server.tool(
     const roots = a.additional_read_roots ?? [];
     const repos = projectRepos(a.project_root); // a workspace's analysis runs at its root and may read every child
     const m = await startAgentDispatch({
-      kind: "analysis", task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform), skill_version: skill.version, repos,
+      kind: "analysis", task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform ?? undefined), skill_version: skill.version, repos,
       req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, undefined, repos) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status };
@@ -86,7 +86,7 @@ server.tool(
     await ensureBranch(a.project_root, a.branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
-      kind: "test-authoring", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch, testPaths: a.test_paths,
+      kind: "test-authoring", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, testPaths: a.test_paths,
       req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status };
@@ -110,7 +110,7 @@ server.tool(
     await ensureBranch(a.project_root, a.branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
-      kind: "coding", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform), branch: a.branch, targetFiles: a.target_files, frozenFiles,
+      kind: "coding", task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, targetFiles: a.target_files, frozenFiles,
       req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, frozen_files: frozenFiles ?? [] };

@@ -42,7 +42,7 @@ const g = (...a: string[]) => execFileSync("git", a, { cwd: repo, encoding: "utf
 g("init", "-q"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
 
 const { startAgentDispatch, getDispatch, ensureBranch } = await import("../dispatch/runner.js");
-const { PLATFORMS, resolvePlatform } = await import("../dispatch/platforms.js");
+const { PLATFORMS, promptAccessRequest, resolvePlatform } = await import("../dispatch/platforms.js");
 const { parseCodingResult, loadSkill } = await import("../dispatch/prompt.js");
 
 async function wait(id: string) {
@@ -64,6 +64,15 @@ test("every built-in platform builds a headless invocation; analysis is restrict
   assert.match(PLATFORMS.cursor.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /--trust/);
   assert.match(PLATFORMS.cursor.build({ ...base, mode: "coding" }, {}, "P").args.join(" "), /--trust/);
   assert.match(PLATFORMS.copilot.build({ ...base, mode: "analysis" }, {}, "P").args.join(" "), /--add-dir \/other/);
+});
+
+test("file-delivered prompts grant only add-dir platforms access to the prompt directory", () => {
+  const req = { mode: "analysis" as const, prompt: "P", promptFile: "/data/dispatches/d_123/prompt.md", projectRoot: "/r", extraReadRoots: ["/other"] };
+  const accessible = promptAccessRequest(req, PLATFORMS.copilot, "file");
+  assert.deepEqual(accessible.extraReadRoots, ["/other", "/data/dispatches/d_123"]);
+  assert.deepEqual(req.extraReadRoots, ["/other"], "the caller's request is not mutated");
+  assert.equal(promptAccessRequest(req, PLATFORMS.copilot, "arg"), req);
+  assert.equal(promptAccessRequest(req, PLATFORMS.cursor, "file"), req);
 });
 
 test("unknown platform ids need a command; declared ones become generic", () => {
