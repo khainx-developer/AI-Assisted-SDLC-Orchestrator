@@ -2,13 +2,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { dataDir, normRoot } from "./paths.js";
-import { loadConfig, workspaceOf } from "./config.js";
+import { loadConfig, workspaceOf, teamDir } from "./config.js";
 
 /** Cap on notes per file. The file is injected into every dispatch, so it must stay small. */
 export const MAX_NOTES = 20;
 const GLOBAL = "_global";
 
-const dir = () => { const d = join(dataDir(), "learnings"); mkdirSync(d, { recursive: true }); return d; };
+const dir = () => { const d = join(teamDir(), "learnings"); mkdirSync(d, { recursive: true }); return d; };
 
 /**
  * File slug for a repo: `projects.<root>.slug` from config.json when set, else <folder name>-<6-char hash of

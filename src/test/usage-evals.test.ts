@@ -71,13 +71,13 @@ const good = goldenFor(REQ)!;
 
 test("every golden artifact passes its case, and every case has one", () => {
   const r = checkGoldens();
-  assert.ok(r.length >= 6);
+  assert.ok(r.length >= 8);
   for (const x of r) assert.ok(x.pass, `${x.case}: ${x.failures.join("; ")}`);
 });
 
 test("every analysis stage skill has at least one eval case", () => {
   const covered = new Set(loadCases().map((c) => c.skill));
-  for (const s of ["requirement-analysis", "design-analysis", "plan-creation", "task-breakdown"]) assert.ok(covered.has(s), `no eval case for ${s}`);
+  for (const s of ["requirement-analysis", "design-analysis", "plan-creation", "task-breakdown", "code-review"]) assert.ok(covered.has(s), `no eval case for ${s}`);
 });
 
 test("the checks reject documents that break the skill's contract", () => {
@@ -147,4 +147,29 @@ function readdirLatest(d: string): string {
 test("a case file path that escapes the throwaway repo is refused", async () => {
   await assert.rejects(runCase({ ...REQ, name: "evil", files: { "../x.txt": "no" } }, { platform: "fake" }), /must be relative/);
   await assert.rejects(runCase({ ...REQ, name: "evil", files: { "C:/x.txt": "no" } }, { platform: "fake" }), /must be relative/);
+});
+
+// ---------- repeated runs ----------
+
+test("runEvals with repeat reports a case that passes only sometimes as flaky, not as a regression", async () => {
+  writeFileSync(answerFile, good);
+  await runEvals([REQ], { platform: "fake", pollMs: 50 }); // a previous passing run
+  let n = 0;
+  const flip = join(dir, "flip.mjs");
+  writeFileSync(flip, `
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+const marker = ${JSON.stringify(join(dir, "flip-count"))};
+const n = existsSync(marker) ? Number(readFileSync(marker, "utf8")) : 0;
+writeFileSync(marker, String(n + 1));
+const answer = readFileSync(n % 2 === 0 ? ${JSON.stringify(join(dir, "good.md"))} : ${JSON.stringify(join(dir, "bad.md"))}, "utf8");
+console.log("<<<ARTIFACT\\n" + answer + "\\nARTIFACT>>>");
+`);
+  writeFileSync(join(dir, "good.md"), good);
+  writeFileSync(join(dir, "bad.md"), "# Requirement: x\n");
+  writeFileSync(cfgPath, JSON.stringify({ default_platform: "fake", platforms: { fake: { command: process.execPath, args: [flip], prompt_via: "file" } } }));
+  const run = await runEvals([REQ], { platform: "fake", pollMs: 50, repeat: 4 });
+  assert.equal(run.results.length, 4);
+  assert.deepEqual(run.flaky, [{ case: "requirement-retry", passed: 2, runs: 4 }]);
+  assert.deepEqual(run.regressions, [], "some runs passed, so it is not a regression");
+  void n;
 });

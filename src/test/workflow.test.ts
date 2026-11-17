@@ -266,3 +266,34 @@ test("children of a task with a breakdown need the breakdown approved first; rev
   const w = wf.createTask({ project_root: "/ws", title: "w", source: "adhoc", flags: risky });
   assert.ok(wf.createTask({ project_root: "/ws", title: "c", source: "adhoc", flags: light, parent_task_id: w.task_id }));
 });
+
+test("review signal: counts edge cases and exhausted retries per repo, honours the threshold, resets when marked reviewed", async () => {
+  const wf = new Workflow();
+  updatePolicy({ max_test_retries: 3, edge_case_review_after: 3 });
+  const t = wf.createTask({ project_root: "/sig", title: "s", source: "adhoc", flags: light });
+  const other = wf.createTask({ project_root: "/elsewhere", title: "o", source: "adhoc", flags: light });
+  wf.recordEdgeCase(other.task_id, "d", "x", "y");
+  wf.recordEdgeCase(t.task_id, "d1", "x", "y");
+  wf.recordEdgeCase(t.task_id, "d2", "x", "y");
+  let s = wf.reviewSignal("/sig");
+  assert.deepEqual([s.due, s.problems], [false, 2], "another repo's problems do not count");
+  wf.recordEdgeCase(t.task_id, "d3", "x", "y");
+  s = wf.reviewSignal("/sig/");
+  assert.equal(s.due, true);
+  assert.match(s.message, /Offer edge-case-review/);
+
+  wf.markReviewed("/sig");
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual([wf.reviewSignal("/sig").due, wf.reviewSignal("/sig").problems], [false, 0]);
+
+  // a task that used up its test retries counts as a problem
+  updatePolicy({ max_test_retries: 1, edge_case_review_after: 1 });
+  wf.transition(t.task_id, "test", "x");
+  wf.transition(t.task_id, "implementation", "fail 1");
+  s = wf.reviewSignal("/sig");
+  assert.equal(s.retries_exhausted, 1);
+  assert.equal(s.due, true);
+
+  updatePolicy({ edge_case_review_after: 0 });
+  assert.equal(wf.reviewSignal("/sig").due, false, "0 turns the prompt off");
+});

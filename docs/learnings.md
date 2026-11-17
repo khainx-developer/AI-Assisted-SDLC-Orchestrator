@@ -43,6 +43,7 @@ learnings/
 
   Date, optional source task, then the note. You can edit the files by hand. Keep the `- [` prefix, because that is how notes are counted.
 - **Cap: 20 notes per file.** The file is injected into every dispatch, so it has to stay small. At the cap, writing is refused until you retire a note.
+- **Sharing with a team:** set `shared_dir` in `config.json` to a folder the team keeps in git (each person clones it). `learnings/` and `policy.json` then live there; tasks, documents and dispatches stay private. Give every shared repo a `projects.<root>.slug`, because the default slug includes a hash of the local path, which differs on each machine. A relative `shared_dir` is taken from the data dir. Sync is plain git (pull, commit, push); the orchestrator never runs it.
 - `learnings/` is included in the daily backup (`backups/learnings-<date>/`, newest 14 kept).
 
 ## How notes get written

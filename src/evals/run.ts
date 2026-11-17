@@ -46,6 +46,8 @@ export interface EvalRun {
   results: EvalResult[];
   /** cases that passed in the previous run and fail now, with the skill versions involved */
   regressions: { case: string; was: string; now: string }[];
+  /** with repeat > 1: cases that passed on some runs and failed on others, with the pass count */
+  flaky: { case: string; passed: number; runs: number }[];
 }
 
 /** Run one case through the real dispatch path (same prompt builder, same platform adapter, same read-only guard) in a throwaway repo. */
@@ -90,15 +92,23 @@ function previousRun(): EvalRun | null {
 }
 
 /** Run cases live, save the run, and report what got worse since the previous saved run. Costs real AI sessions. */
-export async function runEvals(cases: EvalCase[], o: { platform?: string; model?: string; pollMs?: number } = {}): Promise<EvalRun> {
+export async function runEvals(cases: EvalCase[], o: { platform?: string; model?: string; pollMs?: number; repeat?: number } = {}): Promise<EvalRun> {
   const prev = previousRun();
   const results: EvalResult[] = [];
-  for (const c of cases) results.push(await runCase(c, o)); // one at a time: keeps cost and CLI load predictable
-  const regressions = results.filter((r) => !r.pass).flatMap((r) => {
+  const repeat = Math.max(1, Math.floor(o.repeat ?? 1));
+  for (const c of cases) for (let i = 0; i < repeat; i++) results.push(await runCase(c, o)); // one at a time: keeps cost and CLI load predictable
+  // a case regresses only when no run of it passed, so one unlucky sample of a flaky case is reported as flaky, not as a regression
+  const never = results.filter((r) => !r.pass && !results.some((x) => x.case === r.case && x.pass));
+  const regressions = never.filter((r, i) => never.findIndex((x) => x.case === r.case) === i).flatMap((r) => {
     const was = prev?.results.find((p) => p.case === r.case && p.pass);
     return was ? [{ case: r.case, was: was.skill_version, now: r.skill_version }] : [];
   });
-  const run: EvalRun = { at: new Date().toISOString(), results, regressions };
+  const flaky = [...new Set(results.map((r) => r.case))].flatMap((name) => {
+    const rs = results.filter((r) => r.case === name);
+    const passed = rs.filter((r) => r.pass).length;
+    return passed > 0 && passed < rs.length ? [{ case: name, passed, runs: rs.length }] : [];
+  });
+  const run: EvalRun = { at: new Date().toISOString(), results, regressions, flaky };
   mkdirSync(resultsDir(), { recursive: true });
   writeFileSync(join(resultsDir(), `${run.at.replace(/[:.]/g, "-")}.json`), JSON.stringify(run, null, 2));
   return run;

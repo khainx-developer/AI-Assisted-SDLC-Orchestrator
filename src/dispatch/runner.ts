@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 
 import { join, extname, dirname, relative } from "node:path";
 import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
 import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
+import { budgetStatus } from "../common/budget.js";
 import { redactForRepo } from "../common/redact.js";
 import { dispatchUsage } from "../common/usage.js";
 import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
@@ -90,10 +91,16 @@ interface StartArgs {
   frozenFiles?: string[];
   /** test-authoring: where the tests belong; the touched files inside become the frozen set, any others are scope violations */
   testPaths?: string[];
+  /** go ahead although the task is over its budget (the human said so) */
+  overrideBudget?: boolean;
 }
 
 export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const cfg = loadConfig();
+  if (!a.overrideBudget) {
+    const b = budgetStatus(a.task_id, a.req.projectRoot);
+    if (b?.exceeded && b.action === "block") throw new Error(`${b.message} Ask the human whether to continue; to go ahead pass override_budget=true, or raise the budget in config.json.`);
+  }
   // last line of defence: secret-looking strings never reach the AI CLI (or the prompt file kept on disk) from the prompt this tool builds
   const redaction = redactForRepo(a.req.projectRoot, a.req.prompt);
   if (redaction) a = { ...a, req: { ...a.req, prompt: redaction.text } };
@@ -126,7 +133,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const meta: DispatchMeta = {
     dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: root,
     status: "in-flight", started_at: new Date().toISOString(), skill_version: a.skill_version, branch: a.branch,
-    prompt_chars: a.req.prompt.length,
+    prompt_chars: a.req.prompt.length, model: a.req.model ?? override.model,
   };
   if (redaction && Object.keys(redaction.counts).length) meta.redacted = redaction.counts;
   if (frozenSnapshot) { meta.frozen_files = a.frozenFiles; meta.frozen_backup = join(dispatchDir(id), "frozen"); }
@@ -159,6 +166,8 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     meta.exit_code = code;
     meta.output = text;
     meta.usage = dispatchUsage(platform.parseUsage?.(out) ?? null, a.req.prompt.length, text.length);
+    const over = budgetStatus(a.task_id, root, meta.usage);
+    if (over?.exceeded) meta.budget_warning = over.message;
     meta.stderr_tail = err.slice(-2000);
     if (spawnErr) meta.error = `could not start '${exe}': ${spawnErr.message}`;
     if (a.kind === "analysis") {

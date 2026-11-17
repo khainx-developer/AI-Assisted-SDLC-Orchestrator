@@ -38,7 +38,7 @@ sdlc-orchestrator branch set <pattern> [--repo <path>]             e.g. feature/
 sdlc-orchestrator branch reset [--repo <path>]                     back to the default (or the global pattern, for a repo)
 sdlc-orchestrator dispatches usage [--task <id>] [--days N]        token use and cost of finished dispatches
 sdlc-orchestrator evals check                                      offline check of the skill eval cases against their golden artifacts
-sdlc-orchestrator evals run [--case <n>] [--platform <p>] [--model <m>]   run the cases through real AI sessions (costs money)
+sdlc-orchestrator evals run [--case <n>] [--platform <p>] [--model <m>] [--repeat N]   run the cases through real AI sessions (costs money)
 `;
 
 const argv = process.argv.slice(2);
@@ -69,7 +69,7 @@ if (argv[0] === "evals") {
   const sub = argv[1];
   const oi = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : undefined; };
   if (sub !== "check" && sub !== "run") {
-    console.error("usage: evals check                                         offline: each golden artifact must pass its checks (free)\n       evals run [--case <name>] [--platform <p>] [--model <m>]   live: runs the cases through real AI sessions (costs money)");
+    console.error("usage: evals check                                         offline: each golden artifact must pass its checks (free)\n       evals run [--case <name>] [--platform <p>] [--model <m>] [--repeat N]   live: runs the cases through real AI sessions (costs money)");
     process.exit(1);
   }
   let cases = loadCases();
@@ -79,13 +79,14 @@ if (argv[0] === "evals") {
     for (const x of r) console.log(`${x.pass ? "PASS" : "FAIL"}  ${x.case}${x.failures.length ? "\n      " + x.failures.join("\n      ") : ""}`);
     process.exit(r.every((x) => x.pass) ? 0 : 1);
   }
-  const run = await runEvals(cases, { platform: oi("platform"), model: oi("model") });
+  const run = await runEvals(cases, { platform: oi("platform"), model: oi("model"), repeat: oi("repeat") ? Number(oi("repeat")) : 1 });
   for (const x of run.results) {
     const u = x.usage ? `, ${x.usage.input_tokens}/${x.usage.output_tokens} tokens ${x.usage.source}` : "";
     console.log(`${x.pass ? "PASS" : "FAIL"}  ${x.case}  (${x.skill_version}, ${x.platform}, ${Math.round((x.duration_ms ?? 0) / 1000)}s${u})${x.failures.length ? "\n      " + x.failures.join("\n      ") : ""}`);
   }
+  for (const f of run.flaky) console.log(`FLAKY  ${f.case}: passed ${f.passed} of ${f.runs} runs`);
   for (const g of run.regressions) console.log(`REGRESSION  ${g.case}: passed with ${g.was}, fails with ${g.now}`);
-  console.log(`${run.results.filter((x) => x.pass).length}/${run.results.length} passed; run saved under the data folder, evals/results`);
+  console.log(`${run.results.filter((x) => x.pass).length}/${run.results.length} runs passed; run saved under the data folder, evals/results`);
   process.exit(run.results.every((x) => x.pass) ? 0 : 1);
 }
 if (argv[0] === "repos") { reposCommand(argv.slice(1)); process.exit(0); }

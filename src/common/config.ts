@@ -4,6 +4,14 @@ import { dataDir, normRoot } from "./paths.js";
 
 export type ScopeCheck = "off" | "warn" | "fail";
 
+/** Spending limit per task, in tokens (input + output of finished dispatches) and/or reported USD. Estimated tokens are a lower bound. */
+export interface BudgetConfig {
+  task_tokens?: number;
+  task_cost_usd?: number;
+  /** warn (default): the result carries a budget_warning. block: new dispatches for the task are refused once it is over, unless override_budget is passed */
+  action?: "warn" | "block";
+}
+
 export interface PlatformOverride {
   command?: string;
   extra_args?: string[];
@@ -29,6 +37,10 @@ export interface OrchestratorConfig {
     scope_allow?: string[];
     /** remove secret-looking strings from prompts sent to the AI CLI (default true) */
     redact_secrets?: boolean;
+    /** per-repo spending limit; each field overrides the global budget */
+    budget?: BudgetConfig;
+    /** platform for the independent code review of this repo's tasks; default: any configured platform other than the one that wrote the code */
+    review_platform?: string;
     /** Workspace mode: project_root itself is NOT a git repo; these child directories (relative to project_root, or absolute) are. Branches, coding dispatches and tests run per child repo. */
     child_repos?: string[] }>;
   /** branch name for coding work, e.g. "feature/{key}". Placeholders: {key} (Jira key, else task id), {jira_key}, {task_id}. Default "story/{key}". Per-repo value wins. */
@@ -41,6 +53,12 @@ export interface OrchestratorConfig {
   redact_secrets?: boolean;
   /** extra regex sources for team-specific token formats, removed from prompts like the built-in patterns */
   redact_extra?: string[];
+  /** spending limit per task; a repo's own budget overrides it field by field */
+  budget?: BudgetConfig;
+  /** global default for projects.<root>.review_platform */
+  review_platform?: string;
+  /** a folder the team shares (usually a git clone): policy.json and learnings/ live there instead of the private data folder. Tasks, documents and dispatches stay local. */
+  shared_dir?: string;
   platforms: Record<string, PlatformOverride>;
   dispatch_timeout_minutes: number;
   /** finished dispatch folders (prompt, raw output) older than this are deleted when the dispatch server starts; 0 keeps everything */
@@ -55,6 +73,12 @@ export const DEFAULT_CONFIG: OrchestratorConfig = {
   dispatch_timeout_minutes: 30,
   dispatch_retention_days: 14,
 };
+
+/** Where policy.json and learnings/ live: config.shared_dir when set, else the private data folder. A relative path is taken from the data folder. */
+export function teamDir(): string {
+  const s = loadConfig().shared_dir;
+  return s ? resolve(dataDir(), s) : dataDir();
+}
 
 export function loadConfig(): OrchestratorConfig {
   const file = process.env.SDLC_CONFIG ?? join(dataDir(), "config.json");

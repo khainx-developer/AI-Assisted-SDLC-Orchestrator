@@ -147,6 +147,18 @@ server.tool(
   { index: z.number().int(), project_root: z.string().optional() },
   (a) => run(() => removeLearning(a.index, a.project_root))
 );
+server.tool(
+  "get_review_signal",
+  "Is an edge-case-review worth offering for this repo? Counts logged edge cases and tasks out of test retries since the last review against policy.edge_case_review_after. Check at intake and on resume; when due, add it as one numbered option. Never run it unasked.",
+  { project_root: z.string() },
+  (a) => run(() => wf.reviewSignal(a.project_root))
+);
+server.tool(
+  "mark_edge_cases_reviewed",
+  "Record that an edge-case-review finished (even if the human applied nothing) so the same problems stop prompting.",
+  { project_root: z.string() },
+  (a) => run(() => wf.markReviewed(a.project_root))
+);
 server.tool("list_zero_hit_searches", "search_precedent queries that returned nothing: the evidence for or against ever needing semantic search.", { limit: z.number().optional() }, (a) => run(() => wf.zeroHitSearches(a.limit)));
 
 await server.connect(new StdioServerTransport());

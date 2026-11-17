@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dataDir, normRoot } from "../common/paths.js";
-import { branchName } from "../common/config.js";
+import { branchName, teamDir } from "../common/config.js";
 import { loadPolicy, policyVersion, type Policy } from "./policy.js";
 import { SCHEMA } from "./schema.js";
 import { parseOpenQuestions, renderGuidance, applyAnswers, addOpenQuestion, type Answer, type OpenQuestion } from "./questions.js";
@@ -429,6 +429,41 @@ export class Workflow {
     return rows;
   }
 
+  /**
+   * Is it time to offer edge-case-review? Counts problems since the last review of this repo: logged edge cases (spec-wrong
+   * returns log one too) plus tasks that used up their test retries. Only a prompt: nothing runs and nothing changes.
+   */
+  reviewSignal(project_root: string) {
+    const root = normRoot(project_root);
+    const pol = this.policy();
+    const last = (this.db.prepare("SELECT MAX(created_at) AS t FROM review_marks WHERE project_root=?").get(root) as any).t as string | null;
+    const since = last ?? "";
+    const edge = (this.db
+      .prepare("SELECT COUNT(*) AS n FROM edge_cases e JOIN tasks t ON t.task_id=e.task_id WHERE t.project_root=? AND e.created_at>?")
+      .get(root, since) as any).n as number;
+    const exhausted = pol.max_test_retries > 0
+      ? ((this.db
+          .prepare("SELECT COUNT(*) AS n FROM tasks WHERE project_root=? AND retry_count>=? AND updated_at>?")
+          .get(root, pol.max_test_retries, since) as any).n as number)
+      : 0;
+    const problems = edge + exhausted;
+    const threshold = pol.edge_case_review_after;
+    const due = threshold > 0 && problems >= threshold;
+    return {
+      due, problems, edge_cases: edge, retries_exhausted: exhausted, threshold, last_reviewed_at: last,
+      message: due
+        ? `${problems} problems logged since ${last ? `the last review (${last})` : "the start"} (${edge} edge cases, ${exhausted} tasks out of test retries). Offer edge-case-review to the human as an option; never run it unasked.`
+        : threshold === 0 ? "edge-case review prompt is turned off (edge_case_review_after = 0)" : `${problems} of ${threshold} problems since the last review; nothing to offer yet`,
+    };
+  }
+
+  /** Call when an edge-case-review ends, whatever the human decided, so the same problems do not prompt again. */
+  markReviewed(project_root: string) {
+    const ts = now();
+    this.db.prepare("INSERT INTO review_marks (project_root,created_at) VALUES (?,?)").run(normRoot(project_root), ts);
+    return { ok: true, reviewed_at: ts };
+  }
+
   /** Queries that found nothing, newest first. */
   zeroHitSearches(limit = 50) {
     return this.db.prepare("SELECT query, project_root, created_at FROM search_log WHERE hits=0 ORDER BY id DESC LIMIT ?").all(limit);
@@ -473,7 +508,7 @@ export class Workflow {
     copyFileSync(this.file, target);
     // learnings/ and artifacts/ are hand-editable files: back them up alongside the database
     for (const name of ["learnings", ARTIFACTS_DIR]) {
-      const src = join(dataDir(), name);
+      const src = join(name === "learnings" ? teamDir() : dataDir(), name);
       if (existsSync(src)) cpSync(src, join(dir, `${name}-${day}`), { recursive: true });
     }
     for (const prefix of ["workflow-", "learnings-", `${ARTIFACTS_DIR}-`]) {

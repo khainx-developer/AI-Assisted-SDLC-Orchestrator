@@ -82,6 +82,8 @@ The server runs your repo's test command (detected from `package.json`, `pom.xml
 
 In review, the orchestrator finds the PR for the branch, reads CI and review comments, and reports. It never merges or pushes. Say "done" when you are satisfied.
 
+**Optional independent AI review.** When the tests pass the orchestrator offers one more session: a read-only reviewer reads the diff of the task branch against `main` (or `base_branch`) and judges it against the requirement's acceptance criteria and the plan's steps and Test Plan. It runs on a **different platform or model than the coder** where one is configured (set `review_platform` in `config.json` to choose), and the result says whether it really was independent. The review is a document with a verdict (`approve` or `changes-requested`), findings with severity and evidence, plan compliance and test coverage. It is advice: you decide whether to send the task back to implementation with the findings. Very large diffs are cut at whole files and the reviewer is told which it did not get.
+
 ## 7. When the spec is wrong
 
 If a coding session finds that the plan, design or requirement itself cannot be implemented as written, it says so instead of working around it. The orchestrator sends the task **back to that stage** with the problem as an open question, you answer it, and the revised plan needs approval again. A task can be sent back twice by default; after that the orchestrator asks you how to proceed.

@@ -1,0 +1,15 @@
+{
+  "name": "review-clean",
+  "skill": "code-review",
+  "instructions": "Review the change on branch 'story/retry' against 'main'.\n\nWHAT THE CHANGE WAS SUPPOSED TO DO (requirement and plan):\nAC1: a send that fails twice and then succeeds returns true.\nAC2: a send that always fails returns false after exactly 3 attempts.\nPlan: loop the fetch up to 3 times in src/mailer.js; Test Plan: tests in test/mailer.test.js for AC1 and AC2.\n\nFILES CHANGED (2):\n src/mailer.js | 8 +++++---\n test/mailer.test.js | 20 ++++++++++++++++++++\n\nTHE FULL DIFF:\n```diff\ndiff --git a/src/mailer.js b/src/mailer.js\n--- a/src/mailer.js\n+++ b/src/mailer.js\n@@ -1,4 +1,8 @@\n export async function sendEmail(msg) {\n-  const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n-  if (!res.ok) return false;\n-  return true;\n+  for (let attempt = 0; attempt < 3; attempt++) {\n+    const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n+    if (res.ok) return true;\n+  }\n+  return false;\n }\ndiff --git a/test/mailer.test.js b/test/mailer.test.js\nnew file mode 100644\n--- /dev/null\n+++ b/test/mailer.test.js\n@@ -0,0 +1,20 @@\n+import { test } from 'node:test';\n+import assert from 'node:assert/strict';\n+import { sendEmail } from '../src/mailer.js';\n+\n+test('AC1: fails twice then succeeds returns true', async () => {\n+  let calls = 0;\n+  globalThis.fetch = async () => ({ ok: ++calls === 3 });\n+  assert.equal(await sendEmail({}), true);\n+  assert.equal(calls, 3);\n+});\n+\n+test('AC2: always fails returns false after 3 attempts', async () => {\n+  let calls = 0;\n+  globalThis.fetch = async () => { calls++; return { ok: false }; };\n+  assert.equal(await sendEmail({}), false);\n+  assert.equal(calls, 3);\n+});\n```",
+  "files": {
+    "src/mailer.js": "export async function sendEmail(msg) {\n  for (let attempt = 0; attempt < 3; attempt++) {\n    const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n    if (res.ok) return true;\n  }\n  return false;\n}\n"
+  },
+  "checks": {
+    "title_prefix": "# Review:",
+    "headings": ["Verdict", "Findings", "Plan compliance", "Tests"],
+    "min_items": { "Plan compliance": 1 },
+    "must_include": ["approve"],
+    "must_not_match": ["## Verdict\\s+changes-requested", "\\(blocker\\)"]
+  }
+}

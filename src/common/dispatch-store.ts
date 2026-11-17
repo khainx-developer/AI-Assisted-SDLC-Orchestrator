@@ -19,6 +19,8 @@ export interface DispatchMeta {
   kind: "analysis" | "coding" | "test-authoring" | "test";
   task_id: string;
   platform: string;
+  /** the model the session was asked to use (the per-dispatch, repo or platform setting); absent when the CLI picked its own default */
+  model?: string;
   project_root: string;
   status: "in-flight" | "completed" | "failed";
   pid?: number;
@@ -54,6 +56,8 @@ export interface DispatchMeta {
   redacted?: Record<string, number>;
   /** token use (and cost where the CLI reports it); set when the session ends */
   usage?: DispatchUsage;
+  /** set when this dispatch left its task at or over the configured budget */
+  budget_warning?: string;
   /** write sessions: files whose content this session changed (files_changed is everything dirty afterwards) */
   files_touched?: string[];
   /** coding: this session says the plan/design/requirement is wrong; hand to report_spec_wrong */
@@ -79,6 +83,21 @@ export function frozenFilesFrom(task_id: string, dispatch_id: string): string[] 
   if (m.status !== "completed") throw new Error(`dispatch ${dispatch_id} is ${m.status}${m.error ? `: ${m.error}` : ""}; there are no tests to freeze yet`);
   if (!m.frozen_files?.length) throw new Error(`dispatch ${dispatch_id} wrote no test files`);
   return m.frozen_files;
+}
+
+/** The most recently finished dispatch of a kind for a task, or null. */
+export function latestDispatch(task_id: string, kind: DispatchMeta["kind"]): DispatchMeta | null {
+  const root = join(dataDir(), "dispatches");
+  if (!existsSync(root)) return null;
+  let best: DispatchMeta | null = null;
+  for (const id of readdirSync(root)) {
+    try {
+      const m = readDispatchMeta(id);
+      if (m.task_id !== task_id || m.kind !== kind || m.status === "in-flight") continue;
+      if (!best || (m.finished_at ?? "") > (best.finished_at ?? "")) best = m;
+    } catch { /* unreadable folder */ }
+  }
+  return best;
 }
 
 export function readDispatchMeta(id: string): DispatchMeta {

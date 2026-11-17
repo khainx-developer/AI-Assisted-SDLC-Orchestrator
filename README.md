@@ -74,23 +74,17 @@ Practices the community commonly expects when AI does software delivery, and whe
 | Control | Approval gates, read-only analysis (enforced twice), a branch per task, never `main` |
 | Checks done by code | Scope check, frozen tests, double-dispatch guard, tests with capped retries |
 | Process | Triage by risk, requirement → design → plan, big-story split, wrong-spec return |
+| Independent review | Optional read-only review of the branch diff on a different platform or model than the coder, with a verdict and findings; see [workflow.md](docs/workflow.md) |
 | Traceability | Versioned documents stamped with skill version and platform, task history, PR lookup |
 | Operations | Model pinning, timeout, cancel, lost-process detection, daily backups, pruning |
 | Portability | Copilot CLI, Claude Code, Cursor or a custom command, chosen separately for chat and workers |
-| Feedback loop | `edge-case-review` turns recurring problems into rules, repo-instruction suggestions or learnings (run manually) |
-| Evals | `evals check` (free, offline) and `evals run` (live) test the four analysis skills against fixed sample stories; see [Evals](#evals-for-skills-and-prompts) |
+| Feedback loop | `edge-case-review` turns recurring problems into rules, repo-instruction suggestions or learnings. The server counts logged edge cases and tasks out of test retries since the last review; at `edge_case_review_after` (policy, default 5, 0 = off) the orchestrator offers the review as one option, never runs it unasked |
+| Evals | `evals check` (free, offline) and `evals run` (live) test the five stage skills (four analysis skills and `code-review`) against fixed sample stories (8 cases), with `--repeat N` to measure flakiness. A free offline test also checks that the orchestrator prompt and skills only name tools that exist; see [Evals](#evals-for-skills-and-prompts) |
 | Data handling | Secret redaction on every prompt (on by default) and an untrusted-content warning in every dispatch; see [Data handling](#data-handling-and-secrets) |
-| Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch) |
+| Team sharing | `shared_dir` in `config.json` moves `policy.json` and `learnings/` into a folder the team keeps in git; tasks and documents stay private. Sync is plain git; see [learnings.md](docs/learnings.md) |
+| Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch). A per-task budget can warn or block further dispatches |
 
-**Roadmap (not built yet), most valuable first**
-
-| # | Gap | Why it matters |
-|---|---|---|
-| 1 | Team-shared learnings and policy | They are per machine today, which limits team use |
-| 2 | Independent review: reviewer on a different model or platform than the coder | Checks that the reviewer is independent of the coder |
-| 3 | Prompt for `edge-case-review` after repeated failures or returns | Recurring problems depend on someone remembering to run it |
-| 4 | Spending limit: stop or warn when a session or task passes a token or cost budget | Usage is recorded now, but nothing acts on it |
-| 5 | Eval depth: more cases per skill, repeated runs to measure flakiness, a case for the orchestrator's own prompt | Today's evals check document shape on one run per case |
+**Roadmap:** nothing planned. New gaps get listed here as they are found.
 
 ## Documentation
 
@@ -216,7 +210,7 @@ node dist/cli.js dispatches usage                         # all finished dispatc
 
 # skill evals
 node dist/cli.js evals check                              # free and offline: the golden documents must pass their checks
-node dist/cli.js evals run [--case <name>] [--platform <p>] [--model <m>]   # live: real AI sessions, costs money
+node dist/cli.js evals run [--case <name>] [--platform <p>] [--model <m>] [--repeat N]   # live: real AI sessions, costs money
 ```
 
 Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
@@ -261,6 +255,12 @@ Placeholders: `{key}` (Jira key, or the task id when there is none), `{jira_key}
 Branches are created in the child repos, never in the root, by giving each repo its own task: the orchestrator runs analysis at the workspace root (read-only, covering every child and their instruction files), then splits implementation into one child task per repo, each with `project_root` set to that child's path. A child task is an ordinary single-repo task with its own branch, dispatch, tests and PR, and it inherits the workspace's `platform`, `model`, `branch_pattern` and `test_command` unless the child has its own `projects` entry. `dispatch_coding_task` and `run_tests` on the workspace root itself are refused with a message listing the children. Without `child_repos` nothing changes.
 
 **Model per repo.** The model is normally set per platform (`platforms.<id>.model`), so every repo using that platform shares it. To give one repo its own, use `model set` (Commands) or `projects.<root>.model` in `config.json`. Precedence: a model named on a single dispatch, then the repo's `model`, then the platform's `model`, then the CLI's own default. The name must be valid for that repo's AI CLI; a repo whose analysis and coding run on different platforms should keep using the per-platform setting.
+
+**Independent review.** After the tests pass, the orchestrator can offer one extra read-only session that reviews the task branch's diff against `main` (or `base_branch`) and judges it against the requirement and plan: see [workflow.md](docs/workflow.md). It runs on a platform or model other than the coder's where one is configured, and says whether it really was independent. To choose the reviewer yourself:
+```json
+{ "review_platform": "claude", "projects": { "D:/work/ProjectA": { "review_platform": "cursor" } } }
+```
+The default is any configured platform other than the one that wrote the code, so list at least two under `platforms` (or `default_platform` plus one) to get a real second opinion. A repo-wide `model` is not passed to a reviewer on another platform, because that model name may not exist there; pass `model` on the call to set one. The review is advice, a document with a verdict and findings, and it never changes the task.
 
 Routing example: orchestrate from Copilot CLI, analysis on Claude, coding on Copilot, and a different tool for one repo:
 ```json
@@ -317,14 +317,25 @@ Each finished dispatch records `usage` in its `meta.json`. Where the number come
 | Claude Code | `reported`: exact, from the CLI (cached input counted as input) | reported in USD |
 | Copilot CLI, Cursor, custom | `estimated`: prompt sent plus text printed, about 4 characters per token | not available |
 
-An estimate is a **lower bound**: a session that explores a repo reads far more than its prompt, and that reading is not counted. Use it to compare runs and spot the stage that is growing, not to bill. `node dist/cli.js dispatches usage --task <id>` (or ask the orchestrator, which has the `get_usage` tool) adds it up by kind, platform and task, and says how many numbers are exact. There is no spending limit yet: nothing stops a session that runs up a large bill.
+An estimate is a **lower bound**: a session that explores a repo reads far more than its prompt, and that reading is not counted. Use it to compare runs and spot the stage that is growing, not to bill. `node dist/cli.js dispatches usage --task <id>` (or ask the orchestrator, which has the `get_usage` tool) adds it up by kind, platform and task, and says how many numbers are exact.
+
+There is no limit on a single running session: it cannot be stopped by token count, only by `dispatch_timeout_minutes`. What you can set is a **budget per task**, checked between dispatches:
+
+```json
+{ "budget": { "task_tokens": 400000, "task_cost_usd": 5, "action": "warn" },
+  "projects": { "D:/work/ProjectA": { "budget": { "task_tokens": 150000, "action": "block" } } } }
+```
+- `task_tokens` counts input plus output of the task's finished dispatches; `task_cost_usd` counts only costs the CLI reported (Claude Code). Set either or both. A repo's `budget` overrides the global one field by field.
+- `warn` (default): a dispatch that leaves the task at or over budget carries a `budget_warning`, and the orchestrator tells you and asks before dispatching more. Work is never stopped.
+- `block`: once the task is over, new dispatches for it are refused with a message. You can ask the orchestrator to continue anyway (it passes `override_budget`), or raise the budget.
+- Because estimated tokens are a lower bound, a task can be over budget before the numbers say so. For a Claude Code repo the numbers are exact. `get_usage` with `task_id` and `project_root` shows a task against its budget.
 
 ### Evals for skills and prompts
 
-`evals/cases/*.json` are fixed sample stories, one or two per analysis skill (`requirement-analysis`, `design-analysis`, `plan-creation`, `task-breakdown`). Each has a small fixture repo and **shape checks** on the document the skill produces: the template headings, numbered acceptance criteria, open questions in the `- **Q1.**` format the tooling reads, no design talk in a requirement, a Test Plan with at least two behaviours, "No split" answered exactly. `evals/golden/*.md` holds a known-good document for each case.
+`evals/cases/*.json` are fixed sample stories, one or two per stage skill (`requirement-analysis`, `design-analysis`, `plan-creation`, `task-breakdown`, `code-review`). Each has a small fixture repo and **shape checks** on the document the skill produces: the template headings, numbered acceptance criteria, open questions in the `- **Q1.**` format the tooling reads, no design talk in a requirement, a Test Plan with at least two behaviours, "No split" answered exactly. `evals/golden/*.md` holds a known-good document for each case.
 
 - `evals check` is free and runs inside `npm test`. It proves the checks accept the golden documents and reject broken ones, and that every analysis skill has a case.
-- `evals run` sends each case through the real dispatch path (same prompt builder, same platform adapter, same read-only guard) in a throwaway repo, judges the document, saves the run under `~/.ai-sdlc-orchestrator/evals/results/`, and reports a **REGRESSION** when a case that passed last time fails now, with both skill versions (content hashes). Run it after editing a skill, and when you change the model. It costs one real session per case, so try `--case requirement-retry` first.
+- `evals run` sends each case through the real dispatch path (same prompt builder, same platform adapter, same read-only guard) in a throwaway repo, judges the document, saves the run under `~/.ai-sdlc-orchestrator/evals/results/`, and reports a **REGRESSION** when a case that passed last time fails now, with both skill versions (content hashes). Run it after editing a skill, and when you change the model. `--repeat N` runs each case N times and lists a case that passed some runs and failed others as **FLAKY** (not a regression, since some runs passed). It costs one real session per case per repeat, so try `--case requirement-retry` first.
 
 What it does not do: judge whether the content is *good* (a wrong but well-formed requirement passes), run the orchestrator's own system prompt, or repeat a case to measure how often a flaky skill fails. Add a case when a real story goes wrong in a way the checks could have caught (`evals/cases/<name>.json` plus `evals/golden/<name>.md`; the name must match the file name).
 

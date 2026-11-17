@@ -165,6 +165,7 @@ This replaces the old standalone design document. Each line says what was decide
 | No code index or codemap | An index goes stale unless continuously invalidated. Structure notes belong in the repo's own instruction files | Analysis sessions spend most of their time locating code (check `duration_ms` in a dispatch's `meta.json`) |
 | Learnings are plain per-repo Markdown, read whole, never written from dispatch output | A hostile ticket or file must not be able to plant text injected into every later session | Several teammates share one setup (learnings are per machine, not team-visible) |
 | Secret-looking strings are redacted from every prompt this tool builds, and every prompt labels ticket, repo and note text as untrusted data | A key pasted into a ticket must not reach the AI vendor, and hostile text must not steer a session | A secret slips past the patterns, or a false positive hides text a stage needs (see Data handling in the README) |
+| The optional AI review is a read-only dispatch given the branch diff, on a platform or model other than the coder's, and it only advises | A model reviewing its own work shares its blind spots; the human still decides | Reviews rubber-stamp (approve every time), or the reviewer cannot be made independent because only one platform is configured |
 | Codebase facts are suggested to you, not stored | They belong in the repo, where the whole team gets them | Never expected |
 | Dispatches are always asynchronous, polled | One model for every platform; no separate synchronous mode to maintain | Never expected |
 | Big stories are split automatically for review (breakdown), and the server refuses children until you approve it | Over-splitting and never splitting both cost you; a human checks the cut | Review shows the splits are usually accepted unchanged |
@@ -172,7 +173,7 @@ This replaces the old standalone design document. Each line says what was decide
 
 **Still open**
 
-- **Cost or token budget per stage.** Usage is now recorded per dispatch (exact for Claude Code, a lower-bound estimate for the other CLIs; `dispatches usage`). A guardrail that stops a session is still not built: read the numbers from real use to see which stage runs long (likely design or plan, since they explore the repo) before choosing a limit.
+- **Cost or token budget per stage.** A per-task budget is checked between dispatches (`budget` in config.json: warn or block). A single running session still cannot be stopped by tokens, only by the timeout. Read the usage numbers from real use to see which stage runs long (likely design or plan, since they explore the repo) before choosing a limit.
 - **Triage accuracy.** `files_affected` and `has_precedent` are estimates from the ticket text. Decide later whether a small analysis dispatch at task creation should compute them.
 - **Two-way Jira sync.** Deferred on purpose.
 - **Poll interval and auto-approve timeout defaults.** Pick real numbers once you see how long a plan or coding run typically takes.

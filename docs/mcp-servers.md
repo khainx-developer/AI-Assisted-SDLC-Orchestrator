@@ -16,6 +16,7 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 | Open questions | `get_open_questions` (parsed list + ready-to-print reply with how to answer and Options), `answer_open_questions` (records answers as a new version, no model call) |
 | Policy | `get_policy`, `update_policy` (validated; a bad patch is rejected) |
 | Edge cases and search | `record_edge_case`, `search_precedent`, `list_zero_hit_searches` |
+| Review prompt | `get_review_signal` (is an `edge-case-review` due: problems since the last review vs `edge_case_review_after`), `mark_edge_cases_reviewed` |
 | Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap`, `update_linked_refs` |
 | Spec proven wrong | `report_spec_wrong` (sends a task back to plan / design / requirement with the issue as an open question) |
 | Learnings | `read_learnings`, `write_learning`, `remove_learning` (see [learnings.md](learnings.md)) |
@@ -29,11 +30,12 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 | `dispatch_analysis_task` | Read-only session running a stage skill (requirement, design, plan, breakdown). Gets learnings and the repo's own instruction files injected |
 | `dispatch_test_authoring_task` | Optional tests-first step: read+write session that writes only the failing tests; the files it wrote are frozen for the coding session |
 | `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`). Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
+| `dispatch_review_task` | Optional independent code review: read-only session on a different platform or model than the coder (`review_platform` in config.json), given the branch diff against `base_branch` (default `main`, else `master`) plus the requirement and plan as `context`. The call reports `independent` and why; the result's `artifact` is the review (verdict, findings, plan compliance, tests). Advice only, not recorded as a stage document |
 | `run_tests` | Runs the repo's test command. `expect_fail` adds a `verdict` (red / vacuous / broken) for tests written first |
 | `get_repo_settings` | `tests_first`, `scope_check`, `scope_allow` and test command for a repo |
 | `get_dispatch_result` | Status and outcome of any dispatch. `wait_seconds` (max 55) holds the call until it finishes. While running it reports `elapsed_seconds`, `quiet_seconds` and `progress_tail` (the session's last printed output, when the CLI streams any). `redacted` lists secret-looking strings removed from the prompt (kind to count, never the values) |
 | `cancel_dispatch` | Stops an in-flight dispatch (kills the CLI and its child processes) and records it as failed so the stage can be retried. Only after the human chooses it |
-| `get_usage` | Token use (and cost where the CLI reports it) of finished dispatches, in total and by kind, platform and task. `task_id` narrows it to one story. Estimated numbers are a lower bound |
+| `get_usage` | Token use (and cost where the CLI reports it) of finished dispatches, in total and by kind, platform and task. `task_id` narrows it to one story. Estimated numbers are a lower bound. With `task_id` and `project_root` it also shows the task against its budget. All `dispatch_*` tools take `override_budget` (only after the human agrees) to continue past a `block` budget |
 | `list_projects` | Registered repos |
 | `list_platforms` | Configured AI platforms and routing |
 

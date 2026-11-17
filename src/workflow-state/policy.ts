@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dataDir } from "../common/paths.js";
+import { teamDir } from "../common/config.js";
 
 const Gate = z.object({
   stage: z.string(),
@@ -27,6 +27,8 @@ export const PolicySchema = z
     spec_wrong_return_to: z.array(z.string()).default(["requirement", "design", "plan"]),
     /** how many times one task may be sent back that way before it needs a human decision */
     max_spec_wrong_returns: z.number().int().min(0).default(2),
+    /** problems logged (edge cases, plus tasks that used up their test retries) since the last review before the orchestrator offers edge-case-review; 0 turns the offer off */
+    edge_case_review_after: z.number().int().min(0).default(5),
     sync_jira_status: z.boolean(),
     jira_checkpoints: z.record(z.string(), z.string()),
   })
@@ -49,12 +51,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const defaultPolicyPath = join(here, "..", "..", "config", "policy.default.json");
 
 export function policyPath(): string {
-  return join(dataDir(), "policy.json");
+  return join(teamDir(), "policy.json");
 }
 
 export function loadPolicy(): Policy {
   const p = policyPath();
-  if (!existsSync(p)) copyFileSync(defaultPolicyPath, p);
+  if (!existsSync(p)) { mkdirSync(dirname(p), { recursive: true }); copyFileSync(defaultPolicyPath, p); }
   return PolicySchema.parse(JSON.parse(readFileSync(p, "utf8")));
 }
 
