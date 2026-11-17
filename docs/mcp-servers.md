@@ -22,7 +22,7 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 
 ### `dispatch` ([src/dispatch/server.ts](../src/dispatch/server.ts))
 
-Starts worker sessions on any configured AI platform and reports results.
+Starts worker sessions on any configured AI platform and reports results. Dispatches are always asynchronous: a `dispatch_*` call returns a `dispatch_id` and `get_dispatch_result` is how the outcome comes back. How a session runs and what is checked afterwards: [architecture.md](architecture.md).
 
 | Tool | Purpose |
 |---|---|
@@ -47,4 +47,4 @@ Installer flags: `--no-integrations` skips these two; `--jira-server` and `--git
 
 ## Not MCP: worker platforms
 
-Dispatched work runs through the Claude, Copilot or Cursor CLI, or a custom command declared in `config.json`. These are execution platforms, not MCP servers. See design doc §5.4.
+Dispatched work runs through the Claude, Copilot or Cursor CLI, or a custom command declared in `config.json`. These are execution platforms, not MCP servers. How platforms are chosen and configured: [README: Configuration](../README.md#configuration).

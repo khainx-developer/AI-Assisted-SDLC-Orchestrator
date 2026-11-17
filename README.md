@@ -1,21 +1,74 @@
 # AI-Assisted SDLC Orchestrator
 
-An **orchestrator agent** you chat with in GitHub Copilot CLI, Claude Code or Cursor. It takes a story (a Jira ticket or a plain description), decides how much process it needs, and drives it through **requirement → design → plan → implementation → test → review**. It keeps the state, stops for your approval on risky plans, and hands the actual analysis and coding to separate AI sessions so its own context stays small.
+Turn a Jira ticket or a plain description into reviewed, tested code, with an AI that **manages the process** and separate AI sessions that **do the work**. You chat with an orchestrator agent in GitHub Copilot CLI, Claude Code or Cursor. It decides how much process a story needs, drives it through **requirement → design → plan → implementation → test → review**, stops for your approval on risky plans, and remembers where everything stands.
 
-Documentation index: [docs/README.md](docs/README.md)
+## Why
 
-| | |
+One long AI chat that plans, designs and codes runs out of context and forgets the rules. Here the work is split:
+
+- **A small orchestrator** only decides what happens next. It never edits code or does deep analysis, so its context stays small.
+- **Rules and memory live in a server and a database**, not in the model's head. A gate cannot be skipped, and any chat can resume any story.
+- **Heavy work goes to short-lived worker sessions**: read-only for analysis, on a separate branch for coding. The server checks what each one did.
+- **You stay in control**: you answer open questions, confirm each document, and approve risky plans. Every reply ends with numbered options.
+
+## How it works
+
+```mermaid
+flowchart LR
+    You([You]) -- chat --> Orch["Orchestrator agent"]
+    Orch --> WF["workflow-state server<br/>tasks, stages, gates, documents"]
+    Orch --> DP["dispatch server"]
+    Orch --> EXT["Jira + GitHub<br/>(optional)"]
+    DP -- starts --> W["Worker AI sessions<br/>analysis (read-only) / coding"]
+    W --> Repo[("Your repo")]
+```
+
+```mermaid
+flowchart LR
+    S([Story]) --> T["Triage"]
+    T -->|small| I
+    T -->|risky or vague| R["Requirement"] --> D["Design"] --> P["Plan"] --> G{"Approve?"}
+    G --> I["Implementation"] --> Te["Test"] --> Rv["Review"] --> Done([Done])
+    T -.->|"big story"| BD["Split into parts<br/>you review"] -.-> R
+```
+
+1. **Triage.** The orchestrator rates the story on five flags. Small, reversible changes go straight to implementation; breaking, irreversible or vague ones go through requirement, design and plan.
+2. **Analysis stages** run as read-only worker sessions. Each produces a Markdown document you read, correct and confirm. Revisions are new versions.
+3. **Big stories are split** into separate tasks that you review before anything is created.
+4. **A risky plan stops at an approval gate.** Implementation is refused until you approve.
+5. **Implementation** is a coding session on its own `story/<id>` branch, never `main`. Optionally, tests are written first and frozen. The server flags any change outside the plan.
+6. **Tests run, failures retry** a limited number of times, then it goes to review for a human decision. The orchestrator finds the PR and CI results; you merge.
+
+Read next: [workflow.md](docs/workflow.md) (the journey in detail) and [architecture.md](docs/architecture.md) (how the pieces fit).
+
+## What it can do
+
+- **Three ways in:** a Jira key, a plain description, or resume by task id, Jira key or PR number.
+- **Triage by risk:** small reversible changes skip straight to coding; risky or vague ones get requirement, design and plan first.
+- **Versioned documents:** fixed templates, each revision kept, stamped with the skill version and AI platform that wrote it. Open and edit them in any editor.
+- **Approval gates** on risky plans, with an optional auto-approve timeout.
+- **Big stories split for review**, one child task per part, with a progress table on the parent.
+- **Branch per task**, never `main`, with a configurable name pattern.
+- **Tests first (optional)** with the tests frozen, a **scope check** against the plan, and **wrong-spec handling** that sends a task back instead of patching around it.
+- **Test, retry, review** with capped retries, then flagged for a human.
+- **Any AI platform** (Copilot CLI, Claude Code, Cursor, or a custom command) for the chat and for the workers, chosen independently, with the model settable per platform or per repo.
+- **Read-only enforced twice** for analysis: by the platform CLI where possible and by a git check afterwards.
+- **Memory:** durable team notes (learnings), the repo's own instruction files, and full-text search over past decisions.
+- **Resilience:** double-dispatch guard, lost-process detection, cancel, timeout, live elapsed time and last output, daily backups, automatic pruning of old session folders.
+- **Workspaces and multi-repo:** read context from other repos; split changes that span repos into one task per repo.
+
+## Documentation
+
+| Read this | When |
 |---|---|
-| [Features](docs/features.md) | One-page map of what it does |
-| [MCP servers](docs/mcp-servers.md) | Every server and tool |
-| [Learnings (memory)](docs/learnings.md) | How durable notes are stored, written and read |
-| [Design and rationale](ai-sdlc-orchestrator-design.md) | Full design, decisions, build status |
+| This README | What it is, install, daily use, commands, configuration, troubleshooting |
+| [docs/workflow.md](docs/workflow.md) | What happens to a story, step by step, and who does what |
+| [docs/architecture.md](docs/architecture.md) | Components, data, how a dispatch works, what the server checks, design decisions and open questions |
+| [docs/mcp-servers.md](docs/mcp-servers.md) | Every MCP server and tool |
+| [docs/learnings.md](docs/learnings.md) | How durable team notes are stored and used |
+| [clients/README.md](clients/README.md) | Registering the servers by hand (including Claude Desktop) |
 
-```
-You ── chat ──> Orchestrator agent ──> workflow-state MCP  (tasks, stages, artifacts, approvals; SQLite)
-                                   └─> dispatch MCP        (starts worker sessions: Copilot CLI / Claude / Cursor / custom)
-                                   └─> Jira + GitHub MCP   (read tickets, find PRs)
-```
+Agent behaviour lives in [orchestrator-agent/SYSTEM_PROMPT.md](orchestrator-agent/SYSTEM_PROMPT.md) and [orchestrator-agent/skills/](orchestrator-agent/skills/).
 
 ## Prerequisites
 
@@ -28,6 +81,8 @@ You ── chat ──> Orchestrator agent ──> workflow-state MCP  (tasks, s
 | Optional: Atlassian (Jira) and GitHub MCP access | Lets the agent read tickets and find PRs. You sign in when your tool prompts |
 
 ## Install (about 5 minutes)
+
+You install **two things**: the orchestrator (this repo, built once) and the registration of its two servers plus the agent prompt in your chat tool. Nothing is written into your project repos.
 
 **1. Build** (from this repo's folder; keep the folder where it is, because the tools point at it)
 ```
@@ -213,10 +268,11 @@ npm test          # build + run the test suite
 ```
 
 - `src/workflow-state/`: MCP server, policy, SQLite schema and all workflow rules.
-- `src/dispatch/`: MCP server, platform adapters (`platforms.ts`), process runner, prompt building, and `repo-instructions.ts` (the repo's own `CLAUDE.md` / `.github/agents` / skills, injected into read-only analysis sessions as context).
-- `src/common/learnings.ts`: the per-repo learnings store.
-- `src/cli.ts`: the `install`, `repos` and `tasks` commands.
+- `src/dispatch/`: MCP server, platform adapters (`platforms.ts`), process runner (`runner.ts`: start, watch, cancel), post-session checks (`guards.ts`), prompt building, and `repo-instructions.ts` (the repo's own `CLAUDE.md` / `.github/agents` / skills, injected into read-only analysis sessions as context).
+- `src/common/`: config loading, the dispatch record store (`dispatch-store.ts`) and the per-repo learnings store.
+- `src/cli.ts`: the `install`, `repos`, `model`, `branch`, `tasks` and `dispatches` commands.
 - `orchestrator-agent/`: system prompt and skills (the skills run by dispatched sessions are injected into their prompt; the three the chat agent runs itself are embedded in its agent file at install time).
 - `clients/README.md`: manual registration steps, including Claude Desktop.
+- `docs/`: this documentation. [architecture.md](docs/architecture.md) is the best starting point for a new contributor.
 
-The adapters for Claude Code and Cursor follow those tools' documented flags but have not been run against the real CLIs; the Copilot CLI adapter has.
+The Copilot CLI and Cursor adapters have been run against the real CLIs. The Claude Code adapter follows that tool's documented flags but has not been verified against it.

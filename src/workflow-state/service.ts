@@ -367,7 +367,7 @@ export class Workflow {
     return { ok: true, task_id, stage, approved_by };
   }
 
-  /** Called on every poll tick (design 6.5b): auto-approves elapsed gates and reports gates still waiting. */
+  /** Called on every poll tick: auto-approves elapsed gates and reports gates still waiting. */
   checkGates() {
     const pol = this.policy();
     const events: object[] = [];
@@ -424,7 +424,7 @@ export class Workflow {
     const sql = `SELECT kind, task_id, stage, snippet(search_fts, 4, '[', ']', '...', 24) AS snippet FROM search_fts
       WHERE search_fts MATCH ? ${project_root ? "AND project_root = ?" : ""} ORDER BY rank LIMIT ?`;
     const rows = this.db.prepare(sql).all(...(root ? [q, root, limit] : [q, limit]));
-    // logged so zero-hit queries can be reviewed: the observable signal for ever needing semantic search (design 9.6)
+    // logged so zero-hit queries can be reviewed: the observable signal for ever needing semantic search (see docs/architecture.md, Decisions)
     this.db.prepare("INSERT INTO search_log (query,project_root,hits,created_at) VALUES (?,?,?,?)").run(query, root, rows.length, now());
     return rows;
   }

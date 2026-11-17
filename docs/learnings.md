@@ -2,7 +2,7 @@
 
 Learnings are short, durable notes that outlive any single task and are fed back into every later task on the same repo. They are the orchestrator's only long-term memory beyond task history.
 
-Back to the [documentation index](README.md). Design rationale: [design doc §9.7](../ai-sdlc-orchestrator-design.md). This page is the practical guide.
+Part of the [documentation](../README.md#documentation). This page is the practical guide; the reasoning behind it is under Decisions in [architecture.md](architecture.md#decisions-and-when-to-revisit-them).
 
 ## What belongs in learnings (and what doesn't)
 
@@ -91,4 +91,4 @@ Notes go stale (a team changes its process, a ticket template gets fixed). Each 
 
 - **No search or embeddings.** The files are small and read whole. Real retrieval is revisited only if keyword search demonstrably misses similar past cases (see `list_zero_hit_searches`).
 - **No codemap or code index.** An index goes stale as code changes. Structural overviews belong in the repo's own instruction files. Revisit only if analysis sessions spend most of their time locating code (check `duration_ms` in `dispatches/<id>/meta.json`).
-- **Not team-shared.** Learnings live in a per-machine data dir. If several people share one orchestrator setup, revisit this (design doc §13).
+- **Not team-shared.** Learnings live in a per-machine data dir. If several people share one orchestrator setup, revisit this (see [architecture.md](architecture.md#decisions-and-when-to-revisit-them)).

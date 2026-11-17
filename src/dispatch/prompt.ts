@@ -15,9 +15,9 @@ export function loadSkill(name: string, skillsDir = bundledSkillsDir) {
 }
 
 export interface InjectedContext {
-  /** the orchestrator's durable notes for this repo plus global ones (design 9.7) */
+  /** the orchestrator's durable notes for this repo plus global ones */
   learnings?: string | null;
-  /** the repo's own agent/skill/instruction files, analysis only (design 5.2) */
+  /** the repo's own agent/skill/instruction files, analysis only */
   repoInstructions?: string | null;
 }
 

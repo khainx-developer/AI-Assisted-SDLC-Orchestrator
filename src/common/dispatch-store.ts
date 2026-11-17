@@ -20,7 +20,7 @@ export interface DispatchMeta {
   output_bytes?: number;
   /** the last ~500 characters the session printed, refreshed with last_activity_at; empty for CLIs that only print at the end */
   progress_tail?: string;
-  /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (design 9.8) */
+  /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (docs/architecture.md, decisions) */
   duration_ms?: number;
   skill_version?: string;
   branch?: string;
