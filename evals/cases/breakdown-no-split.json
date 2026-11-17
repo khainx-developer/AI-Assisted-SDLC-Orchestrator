@@ -1,0 +1,6 @@
+{
+  "name": "breakdown-no-split",
+  "skill": "task-breakdown",
+  "instructions": "Requirement: fix the typo 'recieve' in the error message in src/errors.js. One file, one repo.",
+  "checks": { "exact": "No split — work fits one pass" }
+}

@@ -5,6 +5,8 @@
   "dispatch_timeout_minutes": 30,
   "branch_pattern": "story/{key}",
   "scope_check": "warn",
+  "redact_secrets": true,
+  "redact_extra": ["ACME-[0-9a-f]{16}"],
   "projects": {
     "D:/work/ProjectA": { "slug": "projecta", "model": "claude-sonnet-5-5", "branch_pattern": "feature/{key}", "coding_platform": "cursor", "test_command": "npm test", "tests_first": true, "scope_allow": ["package-lock.json"] }
   },

@@ -1,0 +1,18 @@
+{
+  "name": "requirement-retry",
+  "skill": "requirement-analysis",
+  "instructions": "Ticket: Add retry with backoff to the email sender. Today a failed send is dropped silently. Failed sends should be retried a few times before giving up. Triage flags: reversible=true, breaking=false.",
+  "files": {
+    "src/mailer.js": "export async function sendEmail(msg) {\n  const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n  if (!res.ok) return false; // failure is dropped\n  return true;\n}\n",
+    "README.md": "# mailer\nSends email through an HTTP gateway.\n"
+  },
+  "checks": {
+    "title_prefix": "# Requirement:",
+    "headings": ["Problem Statement", "Goal", "Scope", "Acceptance Criteria", "Assumptions", "Open Questions"],
+    "min_items": { "Acceptance Criteria": 2 },
+    "open_questions": "labelled",
+    "bullets_not_bracketed": true,
+    "must_include": ["retry"],
+    "must_not_match": ["(^|[^a-z])class([^a-z]|$)", "(^|[^a-z])function([^a-z]|$)", "(^|[^a-z])implemented (by|using|with)"]
+  }
+}

@@ -31,8 +31,9 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 | `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`). Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
 | `run_tests` | Runs the repo's test command. `expect_fail` adds a `verdict` (red / vacuous / broken) for tests written first |
 | `get_repo_settings` | `tests_first`, `scope_check`, `scope_allow` and test command for a repo |
-| `get_dispatch_result` | Status and outcome of any dispatch. `wait_seconds` (max 55) holds the call until it finishes. While running it reports `elapsed_seconds`, `quiet_seconds` and `progress_tail` (the session's last printed output, when the CLI streams any) |
+| `get_dispatch_result` | Status and outcome of any dispatch. `wait_seconds` (max 55) holds the call until it finishes. While running it reports `elapsed_seconds`, `quiet_seconds` and `progress_tail` (the session's last printed output, when the CLI streams any). `redacted` lists secret-looking strings removed from the prompt (kind to count, never the values) |
 | `cancel_dispatch` | Stops an in-flight dispatch (kills the CLI and its child processes) and records it as failed so the stage can be retried. Only after the human chooses it |
+| `get_usage` | Token use (and cost where the CLI reports it) of finished dispatches, in total and by kind, platform and task. `task_id` narrows it to one story. Estimated numbers are a lower bound |
 | `list_projects` | Registered repos |
 | `list_platforms` | Configured AI platforms and routing |
 

@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
 import { frozenFilesFrom, pruneDispatches } from "../common/dispatch-store.js";
+import { usageSummary } from "../common/usage.js";
 import { projectRepos, requireGitRepo } from "../common/target.js";
 import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
@@ -130,7 +131,7 @@ server.tool(
 );
 
 server.tool(
-  "get_dispatch_result", "Status and outcome of a dispatch. Pass wait_seconds (max 55) to block until it finishes instead of returning immediately; use it when polling. status in-flight | completed | failed. Coding results include files_changed (everything dirty) and files_touched (what this session changed), success, needs_clarification/question, pr_number, spec_wrong/spec_issue, scope_violation and frozen_test_violation; test-authoring results include frozen_files; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text.",
+  "get_dispatch_result", "Status and outcome of a dispatch. Pass wait_seconds (max 55) to block until it finishes instead of returning immediately; use it when polling. status in-flight | completed | failed. Coding results include files_changed (everything dirty) and files_touched (what this session changed), success, needs_clarification/question, pr_number, spec_wrong/spec_issue, scope_violation and frozen_test_violation; test-authoring results include frozen_files; analysis results include `artifact` (the clean stage document) and read_only_violation if the session touched files. To keep your context small the raw `output` is left out when an artifact was extracted; pass include_raw=true to get it. To store the artifact, call record_stage_artifact with this dispatch_id; do not copy the text. If `redacted` is present, secret-looking strings (kind -> count) were removed from the prompt before it was sent: tell the human, and suggest keeping secrets out of tickets and repo files.",
   { dispatch_id: z.string(), include_raw: z.boolean().optional(), wait_seconds: z.number().int().min(0).max(55).optional() },
   (a) => run(async () => {
     // Long-poll: hold the call until the dispatch finishes (or the wait elapses) so the agent does not burn its checks in a few seconds
@@ -145,6 +146,12 @@ server.tool(
   "cancel_dispatch", "Stop an in-flight dispatch (kills the AI CLI and its child processes) and record it as failed with the given reason, so the stage can be retried. Use when a dispatch looks stalled and the human chose to cancel; never cancel on your own.",
   { dispatch_id: z.string(), reason: z.string().optional() },
   (a) => run(() => cancelDispatch(a.dispatch_id, a.reason))
+);
+
+server.tool(
+  "get_usage", "Token use (and cost where the AI CLI reports it) of finished dispatches, in total and by kind, platform and task. Pass task_id for one task. Tokens marked `reported` are exact; `estimated` ones are a lower bound (prompt sent plus text printed). Use when the human asks what a task or stage cost.",
+  { task_id: z.string().optional(), days: z.number().int().min(1).optional().describe("only dispatches finished in the last N days") },
+  (a) => run(() => usageSummary({ taskId: a.task_id, days: a.days }))
 );
 
 // housekeeping: drop old finished dispatch folders at startup (never in-flight ones)

@@ -1,0 +1,1 @@
+No split — work fits one pass

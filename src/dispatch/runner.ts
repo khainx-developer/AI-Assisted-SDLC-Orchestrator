@@ -5,6 +5,8 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 
 import { join, extname, dirname, relative } from "node:path";
 import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
 import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
+import { redactForRepo } from "../common/redact.js";
+import { dispatchUsage } from "../common/usage.js";
 import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 import { porcelainPath, pathAllowed, outsideScope, hashFiles, touchedSince, snapshotFrozen, frozenViolations, classifyTestRun } from "./guards.js";
@@ -92,6 +94,9 @@ interface StartArgs {
 
 export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const cfg = loadConfig();
+  // last line of defence: secret-looking strings never reach the AI CLI (or the prompt file kept on disk) from the prompt this tool builds
+  const redaction = redactForRepo(a.req.projectRoot, a.req.prompt);
+  if (redaction) a = { ...a, req: { ...a.req, prompt: redaction.text } };
   const { platform, override } = resolvePlatform(a.platformId, cfg.platforms);
   const id = `d_${randomUUID().slice(0, 8)}`;
   mkdirSync(dispatchDir(id), { recursive: true });
@@ -123,6 +128,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     status: "in-flight", started_at: new Date().toISOString(), skill_version: a.skill_version, branch: a.branch,
     prompt_chars: a.req.prompt.length,
   };
+  if (redaction && Object.keys(redaction.counts).length) meta.redacted = redaction.counts;
   if (frozenSnapshot) { meta.frozen_files = a.frozenFiles; meta.frozen_backup = join(dispatchDir(id), "frozen"); }
   const child = spawn(exe, inv.args, { cwd: a.req.projectRoot, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   meta.pid = child.pid;
@@ -146,13 +152,13 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const timer = setTimeout(() => { meta.error = `timed out after ${cfg.dispatch_timeout_minutes} min`; killTree(child.pid); }, cfg.dispatch_timeout_minutes * 60_000);
   const finish = async (code: number | null, spawnErr?: Error) => {
     clearTimeout(timer);
-    running.delete(id);
     meta.output_bytes = bytes;
     const text = platform.parseOutput(out).trim();
     meta.finished_at = new Date().toISOString();
     meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
     meta.exit_code = code;
     meta.output = text;
+    meta.usage = dispatchUsage(platform.parseUsage?.(out) ?? null, a.req.prompt.length, text.length);
     meta.stderr_tail = err.slice(-2000);
     if (spawnErr) meta.error = `could not start '${exe}': ${spawnErr.message}`;
     if (a.kind === "analysis") {
@@ -190,6 +196,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     }
     meta.status = code === 0 && !meta.error && !meta.read_only_violation && !meta.frozen_test_violation && meta.scope_check !== "fail" ? "completed" : "failed";
     save(meta);
+    running.delete(id); // only now: until the final status is saved, a poll must not mistake this live record for a lost process
   };
   child.on("error", (e) => void finish(null, e));
   child.on("close", (code) => void finish(code));

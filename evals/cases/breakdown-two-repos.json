@@ -1,0 +1,11 @@
+{
+  "name": "breakdown-two-repos",
+  "skill": "task-breakdown",
+  "instructions": "Requirement: add a new `nickname` field. The API (repo D:/work/api) must store and return it, and the web app (repo D:/work/web) must show an edit box and display it. The API change must ship before the web change.",
+  "checks": {
+    "title_prefix": "# Breakdown:",
+    "headings": ["Children", "Coordinated release"],
+    "min_items": { "Children": 2 },
+    "must_include": ["D:/work/api", "D:/work/web"]
+  }
+}

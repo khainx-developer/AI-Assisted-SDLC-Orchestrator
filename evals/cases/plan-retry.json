@@ -1,0 +1,17 @@
+{
+  "name": "plan-retry",
+  "skill": "plan-creation",
+  "instructions": "Requirement: retry a failed send up to 3 times with exponential backoff; a send that fails twice then succeeds returns true; one that always fails returns false after 3 attempts.\nDesign: wrap the fetch in a small retry helper inside src/mailer.js; delay 100ms, 200ms between attempts. Reversible: true.",
+  "files": {
+    "src/mailer.js": "export async function sendEmail(msg) {\n  const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n  if (!res.ok) return false;\n  return true;\n}\n",
+    "test/mailer.test.js": "// existing tests live here\n"
+  },
+  "checks": {
+    "title_prefix": "# Plan:",
+    "headings": ["Steps", "Files touched", "Test Plan"],
+    "forbidden_headings": ["Rollback/Revert notes"],
+    "min_items": { "Steps": 1, "Files touched": 1, "Test Plan": 2 },
+    "must_include": ["src/mailer.js", "test/"],
+    "bullets_not_bracketed": true
+  }
+}

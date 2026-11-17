@@ -27,6 +27,8 @@ export interface OrchestratorConfig {
     scope_check?: ScopeCheck;
     /** extra paths/globs always allowed by the scope check, e.g. lockfiles */
     scope_allow?: string[];
+    /** remove secret-looking strings from prompts sent to the AI CLI (default true) */
+    redact_secrets?: boolean;
     /** Workspace mode: project_root itself is NOT a git repo; these child directories (relative to project_root, or absolute) are. Branches, coding dispatches and tests run per child repo. */
     child_repos?: string[] }>;
   /** branch name for coding work, e.g. "feature/{key}". Placeholders: {key} (Jira key, else task id), {jira_key}, {task_id}. Default "story/{key}". Per-repo value wins. */
@@ -35,6 +37,10 @@ export interface OrchestratorConfig {
   tests_first?: boolean;
   scope_check?: ScopeCheck;
   scope_allow?: string[];
+  /** global default for projects.<root>.redact_secrets (default true) */
+  redact_secrets?: boolean;
+  /** extra regex sources for team-specific token formats, removed from prompts like the built-in patterns */
+  redact_extra?: string[];
   platforms: Record<string, PlatformOverride>;
   dispatch_timeout_minutes: number;
   /** finished dispatch folders (prompt, raw output) older than this are deleted when the dispatch server starts; 0 keeps everything */
@@ -100,6 +106,12 @@ export function repoSettings(root: string): { tests_first: boolean; scope_check:
     scope_allow: [...(cfg.scope_allow ?? []), ...(p?.scope_allow ?? [])],
     test_command: p?.test_command ?? null,
   };
+}
+
+/** Secret redaction switches for prompts sent to the AI CLI. On unless switched off for the repo or globally. */
+export function redactSettings(root: string): { redact_secrets: boolean; redact_extra: string[] } {
+  const cfg = loadConfig();
+  return { redact_secrets: projectConfig(root)?.redact_secrets ?? cfg.redact_secrets ?? true, redact_extra: cfg.redact_extra ?? [] };
 }
 
 export const DEFAULT_BRANCH_PATTERN = "story/{key}";

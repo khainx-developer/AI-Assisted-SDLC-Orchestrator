@@ -1,0 +1,16 @@
+{
+  "name": "design-retry",
+  "skill": "design-analysis",
+  "instructions": "Requirement:\n# Requirement: Retry failed emails\n## Problem Statement\nA failed send in src/mailer.js is dropped.\n## Goal\nRetry a failed send up to 3 times with exponential backoff.\n## Scope\n### In\n- sendEmail retries\n### Out\n- queueing\n## Acceptance Criteria\n1. A send that fails twice then succeeds returns true.\n2. A send that always fails returns false after 3 attempts.\n## Assumptions\n- Gateway errors are transient.\n## Open Questions\nNone.",
+  "files": {
+    "src/mailer.js": "export async function sendEmail(msg) {\n  const res = await fetch(process.env.MAIL_URL, { method: 'POST', body: JSON.stringify(msg) });\n  if (!res.ok) return false;\n  return true;\n}\n"
+  },
+  "checks": {
+    "title_prefix": "# Design:",
+    "headings": ["Chosen Approach", "Reason for choice", "Affected Components/Files", "Risks", "Alternatives considered"],
+    "min_items": { "Affected Components/Files": 1, "Alternatives considered": 1 },
+    "must_include": ["src/mailer.js"],
+    "open_questions": "labelled",
+    "bullets_not_bracketed": true
+  }
+}

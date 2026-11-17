@@ -36,6 +36,8 @@ export interface Platform {
   build(req: DispatchRequest, ov: PlatformOverride, promptArg: string): Invocation;
   /** unwrap CLI-specific envelope to the model's final text */
   parseOutput(stdout: string): string;
+  /** exact token use and cost, when the CLI prints them (Claude Code does); otherwise the runner estimates */
+  parseUsage?(stdout: string): { input_tokens: number; output_tokens: number; cost_usd?: number } | null;
 }
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "WebSearch", "WebFetch"];
@@ -59,6 +61,16 @@ const claude: Platform = {
       if (typeof j.result === "string") return j.result;
     } catch { /* not JSON: fall through */ }
     return out;
+  },
+  parseUsage(out) {
+    try {
+      const j = JSON.parse(out);
+      const u = j.usage;
+      if (!u || typeof u.output_tokens !== "number") return null;
+      // cached input counts too: it is still context the model read
+      const input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+      return { input_tokens: input, output_tokens: u.output_tokens, ...(typeof j.total_cost_usd === "number" ? { cost_usd: j.total_cost_usd } : {}) };
+    } catch { return null; }
   },
 };
 

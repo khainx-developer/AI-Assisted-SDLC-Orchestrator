@@ -5,6 +5,15 @@ import { dataDir } from "./paths.js";
 export const dispatchDir = (id: string) => join(dataDir(), "dispatches", id);
 export const metaFile = (id: string) => join(dispatchDir(id), "meta.json");
 
+export interface DispatchUsage {
+  /** reported: from the AI CLI itself. estimated: prompt size + printed text only, a lower bound (see common/usage.ts) */
+  source: "reported" | "estimated";
+  input_tokens: number;
+  output_tokens: number;
+  /** only when the CLI reports it */
+  cost_usd?: number;
+}
+
 export interface DispatchMeta {
   dispatch_id: string;
   kind: "analysis" | "coding" | "test-authoring" | "test";
@@ -41,6 +50,10 @@ export interface DispatchMeta {
   passed?: boolean;
   /** size of the prompt sent, a rough cost signal next to duration_ms */
   prompt_chars?: number;
+  /** secret-looking strings removed from the prompt before it was sent: kind -> count (never the values) */
+  redacted?: Record<string, number>;
+  /** token use (and cost where the CLI reports it); set when the session ends */
+  usage?: DispatchUsage;
   /** write sessions: files whose content this session changed (files_changed is everything dirty afterwards) */
   files_touched?: string[];
   /** coding: this session says the plan/design/requirement is wrong; hand to report_spec_wrong */

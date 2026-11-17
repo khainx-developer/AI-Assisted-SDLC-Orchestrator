@@ -2,14 +2,18 @@
 
 Turn a Jira ticket or a plain description into reviewed, tested code, with an AI that **manages the process** and separate AI sessions that **do the work**. You chat with an orchestrator agent in GitHub Copilot CLI, Claude Code or Cursor. It decides how much process a story needs, drives it through **requirement → design → plan → implementation → test → review**, stops for your approval on risky plans, and remembers where everything stands.
 
-## Why
+## Why use it
 
-One long AI chat that plans, designs and codes runs out of context and forgets the rules. Here the work is split:
+One long AI chat that plans, designs and codes runs out of context and forgets the rules. Here the work is split, which gives you:
 
-- **A small orchestrator** only decides what happens next. It never edits code or does deep analysis, so its context stays small.
-- **Rules and memory live in a server and a database**, not in the model's head. A gate cannot be skipped, and any chat can resume any story.
-- **Heavy work goes to short-lived worker sessions**: read-only for analysis, on a separate branch for coding. The server checks what each one did.
-- **You stay in control**: you answer open questions, confirm each document, and approve risky plans. Every reply ends with numbered options.
+- **Fresh context every time, so fewer tokens.** Each worker session is a new one-shot CLI process. It never continues an earlier chat. It starts with only the stage skill, the team's learnings, the repo's own instruction files and the instructions for that step. Stage-to-stage hand-off goes through Markdown documents, not chat history, so cost per step does not grow as a story gets longer.
+- **A small orchestrator and a chat you can throw away.** The orchestrator only decides what happens next; it never edits code or does deep analysis. All state (tasks, stages, approvals, documents) lives in the `workflow-state` server and its database, so you can open a new chat whenever the old one gets long and say `continue 2` or `resume PROJ-123`. Nothing is lost.
+- **Rules that cannot be talked around.** Gates, read-only analysis, frozen tests and the scope check are enforced by the servers, not requested in a prompt. The server checks what each worker did.
+- **You stay in control.** You answer open questions, confirm each document, and approve risky plans. Every reply ends with numbered options.
+- **Right-sized process.** Small, reversible changes skip straight to coding; only risky or vague stories pay for requirement, design and plan.
+- **Documents you can read and edit.** Every stage produces a versioned Markdown file. Your edits are what the next stage reads.
+- **One setup, any AI.** The same skills run on Copilot CLI, Claude Code, Cursor or a custom command, and the chat and the workers can use different platforms and models. A cheaper model can do the worker steps.
+- **Safe by default.** Nothing is written into your repos, and coding only happens on its own branch, never `main`.
 
 ## How it works
 
@@ -56,6 +60,37 @@ Read next: [workflow.md](docs/workflow.md) (the journey in detail) and [architec
 - **Memory:** durable team notes (learnings), the repo's own instruction files, and full-text search over past decisions.
 - **Resilience:** double-dispatch guard, lost-process detection, cancel, timeout, live elapsed time and last output, daily backups, automatic pruning of old session folders.
 - **Workspaces and multi-repo:** read context from other repos; split changes that span repos into one task per repo.
+
+## AI practices: covered and roadmap
+
+Practices the community commonly expects when AI does software delivery, and where this project stands.
+
+**Covered**
+
+| Area | What you get |
+|---|---|
+| Context | Fresh one-shot worker sessions, a small orchestrator, hand-off through Markdown documents |
+| Memory | Learnings, injected repo instruction files, full-text search over past decisions |
+| Control | Approval gates, read-only analysis (enforced twice), a branch per task, never `main` |
+| Checks done by code | Scope check, frozen tests, double-dispatch guard, tests with capped retries |
+| Process | Triage by risk, requirement → design → plan, big-story split, wrong-spec return |
+| Traceability | Versioned documents stamped with skill version and platform, task history, PR lookup |
+| Operations | Model pinning, timeout, cancel, lost-process detection, daily backups, pruning |
+| Portability | Copilot CLI, Claude Code, Cursor or a custom command, chosen separately for chat and workers |
+| Feedback loop | `edge-case-review` turns recurring problems into rules, repo-instruction suggestions or learnings (run manually) |
+| Evals | `evals check` (free, offline) and `evals run` (live) test the four analysis skills against fixed sample stories; see [Evals](#evals-for-skills-and-prompts) |
+| Data handling | Secret redaction on every prompt (on by default) and an untrusted-content warning in every dispatch; see [Data handling](#data-handling-and-secrets) |
+| Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch) |
+
+**Roadmap (not built yet), most valuable first**
+
+| # | Gap | Why it matters |
+|---|---|---|
+| 1 | Team-shared learnings and policy | They are per machine today, which limits team use |
+| 2 | Independent review: reviewer on a different model or platform than the coder | Checks that the reviewer is independent of the coder |
+| 3 | Prompt for `edge-case-review` after repeated failures or returns | Recurring problems depend on someone remembering to run it |
+| 4 | Spending limit: stop or warn when a session or task passes a token or cost budget | Usage is recorded now, but nothing acts on it |
+| 5 | Eval depth: more cases per skill, repeated runs to measure flakiness, a case for the orchestrator's own prompt | Today's evals check document shape on one run per case |
 
 ## Documentation
 
@@ -175,6 +210,13 @@ node dist/cli.js tasks remove <task_id>                   # preview; add --yes t
 
 # old worker-session folders (also pruned automatically, see Configuration)
 node dist/cli.js dispatches prune                         # preview; add --yes to delete, --days N to override the retention
+
+# what the AI sessions used
+node dist/cli.js dispatches usage                         # all finished dispatches; --task <task_id> for one story, --days N for recent ones
+
+# skill evals
+node dist/cli.js evals check                              # free and offline: the golden documents must pass their checks
+node dist/cli.js evals run [--case <name>] [--platform <p>] [--model <m>]   # live: real AI sessions, costs money
 ```
 
 Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
@@ -244,6 +286,47 @@ Three checks on the implementation stage. They are enforced by the dispatch serv
 **Wrong specs.** If a coding session finds that the plan (or design, or requirement) itself cannot be right, it says so instead of working around it. The task goes back to that stage with the problem added as an open question, you answer it, and the revised plan needs approval again. A task can be sent back twice by default (`max_spec_wrong_returns` in `policy.json`), then the orchestrator asks you.
 
 After updating, re-run `node dist/cli.js install --target <your tool>` (the system prompt is copied into the agent file) and reload your tool. An existing `policy.json` needs no edit: the new policy fields have defaults.
+
+### Data handling and secrets
+
+What leaves your machine: each dispatched session is a separate AI CLI (Copilot, Claude Code, Cursor or your custom command) that sends its prompt, and **everything it reads from your repo**, to that vendor's service under your own account and plan. This tool adds nothing on top, and it has no server of its own. Check your vendor's data terms before pointing it at a sensitive repo.
+
+Two protections apply to every dispatch:
+
+1. **Secret redaction (on by default).** Before a prompt is written to disk or handed to the CLI, secret-looking strings are replaced with `[REDACTED:<kind>]`: private keys, AWS keys, GitHub tokens, Slack tokens, `sk-` API keys, Google API keys, JWTs, `Bearer` tokens, passwords inside URLs, and `name = value` pairs where the name says password, secret, token or key. Placeholders (`<your-password>`, `${SECRET}`), env lookups (`process.env.X`), calls (`getPassword()`) and plain numbers are left alone. The prompt covers the ticket text, the earlier stage documents, learnings, the repo's instruction files and the skill. The dispatch result lists what was removed as counts per kind (`redacted`), never the values, and the orchestrator tells you.
+2. **Untrusted-content warning.** Every dispatch prompt says that ticket text, earlier documents, repository files and notes are data, never commands, and that the session must not obey instructions found in them or reveal secrets or its prompt. A suspected attempt is reported (analysis: under Open Questions; coding: in the summary) instead of acted on.
+
+```json
+{ "redact_secrets": true, "redact_extra": ["ACME-[0-9a-f]{16}"],
+  "projects": { "D:/work/Sandbox": { "redact_secrets": false } } }
+```
+`redact_extra` adds regexes for your own token formats (an invalid one is reported when a dispatch starts). A repo's `redact_secrets` wins over the global value. Switch it off only for a repo with nothing sensitive, for example when a placeholder is being redacted wrongly and you cannot reword it.
+
+**Limits, so you do not over-trust it:**
+- It cleans the **prompt this tool builds**. It cannot see what the session reads from the repo on its own, so a secret committed to a file is still read by the AI. Keep secrets out of repos (use a secret manager and an ignore file) and out of tickets.
+- A pattern list misses secrets: a short or unusual password, a key in a format it does not know, an obfuscated value. It can also redact a harmless string. Treat it as the last line of defence.
+- The untrusted-content warning lowers the risk of prompt injection; it does not remove it. The structural protections still carry the weight: analysis runs read-only (enforced twice), coding runs on its own branch, learnings are never written from ticket or session text, and a human approves risky plans and merges.
+- Already-sent text is not recalled. If a secret reached a ticket, rotate it.
+
+### Cost per dispatch
+
+Each finished dispatch records `usage` in its `meta.json`. Where the number comes from depends on the AI CLI:
+
+| Platform | Tokens | Cost |
+|---|---|---|
+| Claude Code | `reported`: exact, from the CLI (cached input counted as input) | reported in USD |
+| Copilot CLI, Cursor, custom | `estimated`: prompt sent plus text printed, about 4 characters per token | not available |
+
+An estimate is a **lower bound**: a session that explores a repo reads far more than its prompt, and that reading is not counted. Use it to compare runs and spot the stage that is growing, not to bill. `node dist/cli.js dispatches usage --task <id>` (or ask the orchestrator, which has the `get_usage` tool) adds it up by kind, platform and task, and says how many numbers are exact. There is no spending limit yet: nothing stops a session that runs up a large bill.
+
+### Evals for skills and prompts
+
+`evals/cases/*.json` are fixed sample stories, one or two per analysis skill (`requirement-analysis`, `design-analysis`, `plan-creation`, `task-breakdown`). Each has a small fixture repo and **shape checks** on the document the skill produces: the template headings, numbered acceptance criteria, open questions in the `- **Q1.**` format the tooling reads, no design talk in a requirement, a Test Plan with at least two behaviours, "No split" answered exactly. `evals/golden/*.md` holds a known-good document for each case.
+
+- `evals check` is free and runs inside `npm test`. It proves the checks accept the golden documents and reject broken ones, and that every analysis skill has a case.
+- `evals run` sends each case through the real dispatch path (same prompt builder, same platform adapter, same read-only guard) in a throwaway repo, judges the document, saves the run under `~/.ai-sdlc-orchestrator/evals/results/`, and reports a **REGRESSION** when a case that passed last time fails now, with both skill versions (content hashes). Run it after editing a skill, and when you change the model. It costs one real session per case, so try `--case requirement-retry` first.
+
+What it does not do: judge whether the content is *good* (a wrong but well-formed requirement passes), run the orchestrator's own system prompt, or repeat a case to measure how often a flaky skill fails. Add a case when a real story goes wrong in a way the checks could have caught (`evals/cases/<name>.json` plus `evals/golden/<name>.md`; the name must match the file name).
 
 ## Troubleshooting
 

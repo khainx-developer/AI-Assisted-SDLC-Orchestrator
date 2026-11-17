@@ -1,0 +1,24 @@
+{
+  "name": "requirement-vague",
+  "skill": "requirement-analysis",
+  "instructions": "Ticket: Make the export faster. Nothing else is stated. Triage flags: vague=true.",
+  "files": {
+    "src/export.js": "export function exportAll(rows) { return rows.map((r) => JSON.stringify(r)).join(\",\"); }\n"
+  },
+  "checks": {
+    "title_prefix": "# Requirement:",
+    "headings": [
+      "Problem Statement",
+      "Goal",
+      "Scope",
+      "Acceptance Criteria",
+      "Assumptions",
+      "Open Questions"
+    ],
+    "open_questions": "labelled",
+    "min_items": {
+      "Assumptions": 1
+    },
+    "min_questions": 1
+  }
+}
