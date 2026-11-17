@@ -115,7 +115,14 @@ export class Workflow {
     coordinated_release?: boolean;
   }) {
     const pol = this.policy();
-    if (a.parent_task_id) this.row(a.parent_task_id);
+    if (a.parent_task_id) {
+      this.row(a.parent_task_id);
+      // a parent that has a breakdown document must have it approved first, so a split is never created behind the human's back.
+      // Parents without one (e.g. a workspace plan split per repo) are unaffected.
+      const hasBreakdown = this.db.prepare("SELECT 1 FROM stage_artifacts WHERE task_id=? AND stage='breakdown'").get(a.parent_task_id);
+      if (hasBreakdown && !this.isApproved(a.parent_task_id, "breakdown"))
+        throw new WorkflowError(`the breakdown of ${a.parent_task_id} has not been approved: show the parts to the human and call approve_stage(task_id, "breakdown", <name>) when they agree (a revised breakdown needs approving again)`);
+    }
     const heavy = Workflow.isHeavy(a.flags);
     const stage = heavy ? pol.heavy_start_stage : pol.light_start_stage;
     const id = `task_${randomUUID().slice(0, 8)}`;
@@ -290,7 +297,8 @@ export class Workflow {
 
   recordArtifact(task_id: string, stage: string, content: string, input_refs?: object[], skill_version?: string, platform?: string) {
     const t = this.shape(this.row(task_id));
-    if (!this.policy().stages.includes(stage)) throw new WorkflowError(`unknown stage '${stage}'`);
+    // 'breakdown' is a document on the parent, not a stage a task moves through
+    if (stage !== "breakdown" && !this.policy().stages.includes(stage)) throw new WorkflowError(`unknown stage '${stage}'`);
     const v =
       ((this.db.prepare("SELECT MAX(version) AS v FROM stage_artifacts WHERE task_id=? AND stage=?").get(task_id, stage) as any).v ?? 0) + 1;
     const rel = artifactRel(task_id, stage, v);

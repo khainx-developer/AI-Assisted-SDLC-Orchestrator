@@ -14,6 +14,7 @@ writeFileSync(fake, `
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 const [,, promptFile, behaviour] = process.argv;
 const prompt = readFileSync(promptFile, "utf8");
+if (behaviour === "hang") { console.log("working"); setInterval(() => {}, 1000); await new Promise(() => {}); }
 if (behaviour === "edit") writeFileSync("changed.txt", "x");
 if (prompt.includes("READ-ONLY")) {
   if (behaviour === "sneaky") writeFileSync("oops.txt", "x");
@@ -41,7 +42,7 @@ mkdirSync(repo);
 const g = (...a: string[]) => execFileSync("git", a, { cwd: repo, encoding: "utf8" });
 g("init", "-q"); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
 
-const { startAgentDispatch, getDispatch, ensureBranch } = await import("../dispatch/runner.js");
+const { startAgentDispatch, getDispatch, cancelDispatch, ensureBranch } = await import("../dispatch/runner.js");
 const { PLATFORMS, promptAccessRequest, resolvePlatform } = await import("../dispatch/platforms.js");
 const { parseCodingResult, loadSkill } = await import("../dispatch/prompt.js");
 
@@ -347,4 +348,44 @@ test("repo settings: tests_first defaults off, scope_check defaults to warn, rep
   assert.deepEqual(repoSettings(repo), { tests_first: false, scope_check: "off", scope_allow: ["a", "b"], test_command: "npm t" });
   writeGuardCfg("none", { scope_check: "bogus" });
   assert.equal(repoSettings(repo).scope_check, "warn", "an invalid value falls back to warn");
+});
+
+test("cancel_dispatch kills a hung session, records why, and the stage can be retried; in-flight results report elapsed time", async () => {
+  writeCfg("hang");
+  const m = await startAgentDispatch({ kind: "analysis", task_id: "c", platformId: "fake", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } });
+  await new Promise((r) => setTimeout(r, 500));
+  const live = getDispatch(m.dispatch_id) as any;
+  assert.equal(live.status, "in-flight");
+  assert.ok(live.elapsed_seconds >= 0 && live.quiet_seconds >= 0, "liveness fields are reported while running");
+  assert.match(live.progress_tail ?? "", /working/, "what the session printed is surfaced");
+  cancelDispatch(m.dispatch_id, "cancelled by test");
+  const r = await wait(m.dispatch_id);
+  assert.equal(r.status, "failed");
+  assert.equal(r.error, "cancelled by test");
+  assert.doesNotThrow(() => process.kill(process.pid, 0)); // the server itself is untouched
+  assert.equal(cancelDispatch(m.dispatch_id).status, "failed", "cancelling a finished dispatch changes nothing");
+
+  writeCfg("none");
+  const again = await wait((await startAgentDispatch({ kind: "analysis", task_id: "c", platformId: "fake", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } })).dispatch_id);
+  assert.equal(again.status, "completed");
+});
+
+test("pruneDispatches removes only old finished dispatches; dry run deletes nothing; in-flight are kept", async () => {
+  const { pruneDispatches, dispatchDir, metaFile } = await import("../common/dispatch-store.js");
+  const mk = (id: string, status: string, finishedDaysAgo?: number) => {
+    mkdirSync(dispatchDir(id), { recursive: true });
+    const finished_at = finishedDaysAgo === undefined ? undefined : new Date(Date.now() - finishedDaysAgo * 86_400_000).toISOString();
+    writeFileSync(metaFile(id), JSON.stringify({ dispatch_id: id, status, started_at: new Date().toISOString(), finished_at }));
+  };
+  mk("d_00000001", "completed", 30);
+  mk("d_00000002", "failed", 20);
+  mk("d_00000003", "completed", 1);
+  mk("d_00000004", "in-flight");
+  const dry = pruneDispatches(14, true);
+  assert.deepEqual(dry.removed.sort().filter((i) => /^d_0000000/.test(i)), ["d_00000001", "d_00000002"]);
+  const { existsSync } = await import("node:fs");
+  assert.ok(existsSync(dispatchDir("d_00000001")), "dry run keeps everything");
+  pruneDispatches(14);
+  assert.ok(!existsSync(dispatchDir("d_00000001")) && !existsSync(dispatchDir("d_00000002")));
+  assert.ok(existsSync(dispatchDir("d_00000003")) && existsSync(dispatchDir("d_00000004")));
 });

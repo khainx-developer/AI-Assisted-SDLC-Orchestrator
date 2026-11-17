@@ -251,3 +251,18 @@ test("a policy.json written before spec_wrong settings existed still validates a
   assert.equal(p.max_spec_wrong_returns, 2);
   assert.throws(() => PolicySchema.parse({ ...old, spec_wrong_return_to: ["nope"] }));
 });
+
+test("children of a task with a breakdown need the breakdown approved first; revising it voids the approval", () => {
+  const wf = new Workflow();
+  const p = wf.createTask({ project_root: "/bd", title: "big", source: "adhoc", flags: risky });
+  const child = () => wf.createTask({ project_root: "/bd", title: "c", source: "adhoc", flags: light, parent_task_id: p.task_id });
+  wf.recordArtifact(p.task_id, "breakdown", ["# Breakdown", "## Children", "- **a**"].join("\n"));
+  assert.throws(child, /breakdown .* not been approved/);
+  wf.approve(p.task_id, "breakdown", "khai");
+  assert.equal(child().parent_task_id, p.task_id);
+  wf.recordArtifact(p.task_id, "breakdown", ["# Breakdown v2", "## Children", "- **a**", "- **b**"].join("\n"));
+  assert.throws(child, /not been approved/);
+  // a parent with no breakdown document (workspace per-repo split) is unaffected
+  const w = wf.createTask({ project_root: "/ws", title: "w", source: "adhoc", flags: risky });
+  assert.ok(wf.createTask({ project_root: "/ws", title: "c", source: "adhoc", flags: light, parent_task_id: w.task_id }));
+});

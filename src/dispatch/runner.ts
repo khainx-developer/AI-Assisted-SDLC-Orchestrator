@@ -135,6 +135,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     if (now - lastSave < 10_000) return;
     lastSave = now;
     meta.last_activity_at = new Date(now).toISOString(); meta.output_bytes = bytes;
+    meta.progress_tail = (out + err).replace(/\[[0-9;]*[A-Za-z]/g, "").trim().slice(-500); // what the CLI printed last, if it streams at all
     try { save(meta); } catch { /* a heartbeat write must never kill the dispatch */ }
   };
   child.stdout.on("data", (d) => { out += d; activity(d); });
@@ -261,7 +262,7 @@ export function cancelDispatch(id: string, reason = "cancelled by user"): Dispat
 
 export function getDispatch(id: string): DispatchMeta {
   const m = readDispatchMeta(id);
-  if (m.status === "in-flight" && m.pid) {
+  if (m.status === "in-flight" && m.pid && !running.has(id)) { // sessions this process started finish via their own close handler
     try { process.kill(m.pid, 0); }
     catch { // owning process is gone and never wrote a result (e.g. the server restarted mid-run)
       m.status = "failed"; m.error = "process lost: dispatch server restarted or child died before reporting"; m.finished_at = new Date().toISOString(); save(m);

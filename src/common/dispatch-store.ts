@@ -18,6 +18,8 @@ export interface DispatchMeta {
   /** last time the session wrote anything to stdout/stderr (updated at most every 10s) and how much it has written; a liveness signal for in-flight dispatches */
   last_activity_at?: string;
   output_bytes?: number;
+  /** the last ~500 characters the session printed, refreshed with last_activity_at; empty for CLIs that only print at the end */
+  progress_tail?: string;
   /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (design 9.8) */
   duration_ms?: number;
   skill_version?: string;
