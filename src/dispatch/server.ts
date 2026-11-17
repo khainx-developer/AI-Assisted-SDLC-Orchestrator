@@ -2,13 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
-import { frozenFilesFrom } from "../common/dispatch-store.js";
+import { frozenFilesFrom, pruneDispatches } from "../common/dispatch-store.js";
 import { projectRepos, requireGitRepo } from "../common/target.js";
 import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
-import { startAgentDispatch, startTestDispatch, getDispatch, ensureBranch, detectTestCommand } from "./runner.js";
+import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
 
 const server = new McpServer({ name: "dispatch", version: "0.1.0" });
 
@@ -140,6 +140,15 @@ server.tool(
     return a.include_raw || !rest.artifact ? { ...rest, output } : rest;
   })
 );
+
+server.tool(
+  "cancel_dispatch", "Stop an in-flight dispatch (kills the AI CLI and its child processes) and record it as failed with the given reason, so the stage can be retried. Use when a dispatch looks stalled and the human chose to cancel; never cancel on your own.",
+  { dispatch_id: z.string(), reason: z.string().optional() },
+  (a) => run(() => cancelDispatch(a.dispatch_id, a.reason))
+);
+
+// housekeeping: drop old finished dispatch folders at startup (never in-flight ones)
+try { const d = loadConfig().dispatch_retention_days ?? 14; if (d > 0) pruneDispatches(d); } catch { /* housekeeping must not block startup */ }
 
 // resolvePlatform is re-exported for tests/tools that want to validate config up front
 export { resolvePlatform };

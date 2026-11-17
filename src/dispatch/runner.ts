@@ -128,14 +128,25 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   meta.pid = child.pid;
   save(meta);
 
-  let out = "", err = "";
-  child.stdout.on("data", (d) => (out += d));
-  child.stderr.on("data", (d) => (err += d));
+  let out = "", err = "", bytes = 0, lastSave = 0;
+  const activity = (d: Buffer | string) => {
+    bytes += d.length;
+    const now = Date.now();
+    if (now - lastSave < 10_000) return;
+    lastSave = now;
+    meta.last_activity_at = new Date(now).toISOString(); meta.output_bytes = bytes;
+    try { save(meta); } catch { /* a heartbeat write must never kill the dispatch */ }
+  };
+  child.stdout.on("data", (d) => { out += d; activity(d); });
+  child.stderr.on("data", (d) => { err += d; activity(d); });
   if (inv.stdin !== undefined) child.stdin.end(inv.stdin); else child.stdin.end();
+  running.set(id, { meta, pid: child.pid });
 
-  const timer = setTimeout(() => { meta.error = `timed out after ${cfg.dispatch_timeout_minutes} min`; child.kill(); }, cfg.dispatch_timeout_minutes * 60_000);
+  const timer = setTimeout(() => { meta.error = `timed out after ${cfg.dispatch_timeout_minutes} min`; killTree(child.pid); }, cfg.dispatch_timeout_minutes * 60_000);
   const finish = async (code: number | null, spawnErr?: Error) => {
     clearTimeout(timer);
+    running.delete(id);
+    meta.output_bytes = bytes;
     const text = platform.parseOutput(out).trim();
     meta.finished_at = new Date().toISOString();
     meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
@@ -225,6 +236,29 @@ export function startTestDispatch(task_id: string, root: string, command: string
   return meta;
 }
 
+/** sessions started by this server process; lets cancel set the reason before the close handler records the failure */
+const running = new Map<string, { meta: DispatchMeta; pid?: number }>();
+
+/** Kill the CLI and everything it spawned. child.kill() alone leaves grandchildren running on Windows (cmd shims, node wrappers). */
+function killTree(pid?: number) {
+  if (!pid) return;
+  try {
+    if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    else process.kill(pid, "SIGKILL");
+  } catch { /* already gone */ }
+}
+
+/** Stop an in-flight dispatch and record it as failed ("cancelled") so the task can be retried. Works after a server restart too (kills by pid). */
+export function cancelDispatch(id: string, reason = "cancelled by user"): DispatchMeta {
+  const m = readDispatchMeta(id);
+  if (m.status !== "in-flight") return m;
+  const live = running.get(id);
+  if (live) { live.meta.error = reason; killTree(live.pid); return getDispatch(id); } // the close handler finishes the record
+  killTree(m.pid);
+  m.status = "failed"; m.error = reason; m.finished_at = new Date().toISOString(); save(m);
+  return m;
+}
+
 export function getDispatch(id: string): DispatchMeta {
   const m = readDispatchMeta(id);
   if (m.status === "in-flight" && m.pid) {
@@ -232,6 +266,12 @@ export function getDispatch(id: string): DispatchMeta {
     catch { // owning process is gone and never wrote a result (e.g. the server restarted mid-run)
       m.status = "failed"; m.error = "process lost: dispatch server restarted or child died before reporting"; m.finished_at = new Date().toISOString(); save(m);
     }
+  }
+  if (m.status === "in-flight") {
+    const now = Date.now();
+    const quietFor = Math.round((now - Date.parse(m.last_activity_at ?? m.started_at)) / 1000);
+    (m as any).elapsed_seconds = Math.round((now - Date.parse(m.started_at)) / 1000);
+    (m as any).quiet_seconds = quietFor; // 0 output is normal for some CLIs (they print once at the end), so this is a hint, not proof of a hang
   }
   return m;
 }

@@ -13,6 +13,7 @@ A one-page map. Each line links to where it is explained.
 - **Tests first (optional):** a separate session writes the failing tests, they are checked to fail for the right reason (`red`, not `vacuous` or `broken`) and frozen, then the coding session must make them pass without editing them. Off by default; the orchestrator offers it only for bug fixes, logic and risky changes. [README: Tests first](../README.md#tests-first-scope-and-wrong-specs), design §6.8
 - **Scope check:** the plan's "Files touched" is the allowed scope of the coding session; files changed outside it are reported (`warn`, default) or fail the dispatch (`fail`). Design §6.8
 - **Spec proven wrong:** a coding session can say the plan itself is wrong. The task goes back to plan / design / requirement with the issue added as an open question, instead of being patched around; capped per task. Design §6.8
+- **Big stories are split for review:** a large requirement is broken into parts you approve first; each part is its own task, and the parent shows "N of M parts done". [README: Use it](../README.md#use-it)
 - **Multi-repo:** read-only context from other repos; one child task per repo for changes that span repos, with coordinated release. Design §6.7
 - **Non-git workspace root:** list the git children as `child_repos`; analysis runs at the root, implementation as one child task per repo that inherits the workspace settings. [README: Configuration](../README.md#configuration)
 - **Every reply ends with numbered options**, so there are no commands to remember. [README: Use it](../README.md#use-it)
@@ -28,9 +29,11 @@ A one-page map. Each line links to where it is explained.
 - **Any AI platform** for hosting and for workers (Copilot CLI, Claude Code, Cursor, custom), chosen independently, per mode or per repo, with the AI model settable per platform or per repo (`model set`). Design §5.4
 - **Read-only enforced twice:** by the platform CLI where possible, and by a git-status check after every analysis session. Design §5.2
 - **Resilience:** in-flight dispatch guard against double dispatch, lost-process detection, daily backups of `workflow.db` and `learnings/`. Design §5.1
+- **Slow or stalled sessions:** elapsed and quiet time are reported, `cancel_dispatch` kills the whole process tree, a hard timeout applies, and long prompts go by file to avoid Windows' command-line limit. [README: Troubleshooting](../README.md#troubleshooting)
+- **Housekeeping:** finished dispatch folders are pruned after `dispatch_retention_days` (default 14); `dispatches prune` does it by hand.
 
 ## Operating it
-- **CLI:** install, repos, tasks. [README: Commands](../README.md#commands)
+- **CLI:** install, repos, tasks, dispatches. [README: Commands](../README.md#commands)
 - **MCP servers:** [mcp-servers.md](mcp-servers.md)
 - **Configuration and data dir:** [README: Configuration](../README.md#configuration)
 - **Troubleshooting:** [README: Troubleshooting](../README.md#troubleshooting)

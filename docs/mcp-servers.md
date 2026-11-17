@@ -31,7 +31,8 @@ Starts worker sessions on any configured AI platform and reports results.
 | `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`). Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
 | `run_tests` | Runs the repo's test command. `expect_fail` adds a `verdict` (red / vacuous / broken) for tests written first |
 | `get_repo_settings` | `tests_first`, `scope_check`, `scope_allow` and test command for a repo |
-| `get_dispatch_result` | Status and outcome of any dispatch (returns immediately; poll it) |
+| `get_dispatch_result` | Status and outcome of any dispatch. `wait_seconds` (max 55) holds the call until it finishes. While running it reports `elapsed_seconds` and `quiet_seconds` |
+| `cancel_dispatch` | Stops an in-flight dispatch (kills the CLI and its child processes) and records it as failed so the stage can be retried. Only after the human chooses it |
 | `list_projects` | Registered repos |
 | `list_platforms` | Configured AI platforms and routing |
 

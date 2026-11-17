@@ -79,10 +79,11 @@ resume PROJ-123         also works with a task id or PR number
 ```
 **What happens to a story**
 1. The orchestrator triages it. A small, reversible change skips straight to implementation. A risky, breaking or vague one goes through **requirement → design → plan**.
+   A **big story** (many acceptance criteria, several independent deliverables, more than one PR, or several repos) is first run through **task-breakdown**. You get a numbered list of parts to review and edit, and nothing is created until you agree. Each part then becomes its own task with its own design, plan, approval and PR. The parent shows a progress table ("2 of 5 parts done") whenever you ask about it, and is never reported complete while a part is unfinished.
 2. Each analysis stage runs in a read-only worker session and produces an **artifact**. You read it, answer its open questions, and **confirm** or **revise** it (revisions are stored as new versions).
 3. A risky **plan** stops at an approval gate. Implementation is refused until you say "approve the plan".
 4. Implementation runs on a `story/<id>` branch (never `main`), then tests, then review. Optionally the tests are written first and frozen, and changes outside the plan are flagged ([details](#tests-first-scope-and-wrong-specs)).
-5. If it says work is still running, say `check status`.
+5. While a worker session runs, the agent waits for it (up to about 10 minutes per reply) and tells you how long it has been running. If it may be stalled (over about 10 minutes running, or 5 minutes without output) it offers: keep waiting, **cancel and retry**, or retry on another platform. It never cancels on its own. If it stops waiting, say `check status`.
 
 **See artifacts**: ask in chat ("show the plan"), or from a terminal (see Commands). **Remove a story**: say `remove 2` (it asks you to confirm; `cancel` keeps the history, `remove` deletes it permanently).
 
@@ -116,6 +117,9 @@ node dist/cli.js tasks list
 node dist/cli.js tasks show <task_id | JIRA-KEY | PR#>
 node dist/cli.js tasks show <task_id> --stage plan        # requirement | design | plan
 node dist/cli.js tasks remove <task_id>                   # preview; add --yes to delete (--with-children for sub-tasks)
+
+# old worker-session folders (also pruned automatically, see Configuration)
+node dist/cli.js dispatches prune                         # preview; add --yes to delete, --days N to override the retention
 ```
 
 Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
@@ -141,7 +145,7 @@ Everything lives in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
 | `workflow.db` | Tasks, history, approvals, and each stage document's metadata and search index (SQLite). The documents themselves are not stored here |
 | `artifacts/<task_id>/<stage>.v<N>.md` | The stage documents (requirement, design, plan...) as Markdown, one file per revision. Open and review them in any editor; the next stage reads the file, so your edits count. Databases from older versions are migrated to files automatically on first start |
 | `learnings/` | One markdown file per repo plus `_global.md`: durable notes about ticketing quirks, team habits and how requests are phrased. Injected into every dispatch. Hand-editable; max 20 notes per file. Name a repo's file with `projects.<root>.slug` in `config.json`, else `<folder>-<hash>` |
-| `dispatches/` | One folder per worker session: the prompt sent, raw output, status |
+| `dispatches/` | One folder per worker session: the prompt sent, raw output, status. Finished ones older than `dispatch_retention_days` (default 14, `0` keeps all) are deleted when the dispatch server starts; running ones never are. Stage documents are not affected (they live in `artifacts/`) |
 | `backups/` | Daily copy of `workflow.db`, `learnings/` and `artifacts/`, newest 14 kept |
 
 **Branch names.** Coding work always runs on its own branch, created automatically from whatever is checked out. The default name is `story/<Jira key or task id>` (the installer writes it to `config.json` as `branch_pattern`; it never overwrites one you set). To follow your team's convention, run `node dist/cli.js branch set "feature/{key}" --repo <path>` (see Commands; it validates the pattern and shows an example name), or set `branch_pattern` globally or per repo in `config.json` yourself:
@@ -194,7 +198,8 @@ After updating, re-run `node dist/cli.js install --target <your tool>` (the syst
 | "GitHub Copilot CLI was not found" or `UnsupportedWindowsCommandValue` | The Copilot CLI isn't installed, or only VS Code's `copilot-shim` is on PATH. Install it (`npm install -g @github/copilot`) and run `copilot` once. The dispatcher launches the real binary on Windows |
 | Worker session says "Skipped workspace MCP servers ... not trusted" | Harmless warning. Trust the folder in the CLI if the worker needs repo-level MCP servers |
 | Cursor Agent: "Workspace Trust Required" / exits 1 on analysis | Headless `cursor-agent` needs `--trust`. The Cursor adapter always passes it; rebuild (`npm run build`) and reload MCP if you still see the old error |
-| Agent says "still running" and stops | Say `check status`. A stage takes 1 to 5 minutes |
+| Agent says "still running" and stops | Say `check status`. A stage takes 1 to 5 minutes. Past that, the agent reports the elapsed time and offers to cancel and retry; `dispatch_timeout_minutes` (default 30, lower it in `config.json` if stages are quick) kills a session that runs too long and marks it failed |
+| `spawn ENAMETOOLONG` on Windows | The prompt was too long for a command line. Prompts over 8,000 characters are now passed as a file; rebuild and reload if you still see it |
 | A story is missing from "what's open?" | Check `node dist/cli.js tasks list`; make sure the repo is registered (`repos list`) |
 | `Model "x" is not available` | Fix the name in `config.json` (see `/model` in `copilot`) |
 | Dispatch failed for another reason | Read `~/.ai-sdlc-orchestrator/dispatches/<id>/meta.json` (`error`, `stderr_tail`, `output`) |

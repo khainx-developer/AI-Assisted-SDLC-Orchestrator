@@ -40,6 +40,17 @@ sdlc-orchestrator branch reset [--repo <path>]                     back to the d
 
 const argv = process.argv.slice(2);
 if (argv[0] === "tasks") { await tasksCommand(argv.slice(1)); process.exit(0); }
+if (argv[0] === "dispatches") {
+  const { pruneDispatches } = await import("./common/dispatch-store.js");
+  const { loadConfig } = await import("./common/config.js");
+  if (argv[1] !== "prune") { console.error("usage: dispatches prune [--days N] [--yes]   (default days from config dispatch_retention_days, else 14; without --yes only lists)"); process.exit(1); }
+  const di = argv.indexOf("--days");
+  const days = di >= 0 ? Number(argv[di + 1]) : loadConfig().dispatch_retention_days ?? 14;
+  if (!Number.isFinite(days) || days < 0) { console.error("--days must be a number >= 0"); process.exit(1); }
+  const r = pruneDispatches(days, !argv.includes("--yes"));
+  console.log(`${argv.includes("--yes") ? "removed" : "would remove"} ${r.removed.length} finished dispatch(es) older than ${days} day(s); kept ${r.kept}${argv.includes("--yes") || !r.removed.length ? "" : "; re-run with --yes to delete"}`);
+  process.exit(0);
+}
 if (argv[0] === "repos") { reposCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] === "model") { modelCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] === "branch") { await branchCommand(argv.slice(1)); process.exit(0); }

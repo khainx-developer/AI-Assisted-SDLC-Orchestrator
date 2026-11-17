@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir } from "./paths.js";
 
@@ -15,6 +15,9 @@ export interface DispatchMeta {
   pid?: number;
   started_at: string;
   finished_at?: string;
+  /** last time the session wrote anything to stdout/stderr (updated at most every 10s) and how much it has written; a liveness signal for in-flight dispatches */
+  last_activity_at?: string;
+  output_bytes?: number;
   /** wall-clock time of the session; lets you see whether analysis sessions spend their time locating code (design 9.8) */
   duration_ms?: number;
   skill_version?: string;
@@ -80,4 +83,27 @@ export function completedArtifact(task_id: string, dispatch_id: string): { conte
   if (m.status !== "completed") throw new Error(`dispatch ${dispatch_id} is ${m.status}${m.error ? `: ${m.error}` : ""}; nothing to store`);
   if (!m.artifact?.trim()) throw new Error(`dispatch ${dispatch_id} produced no artifact`);
   return { content: m.artifact, skill_version: m.skill_version, platform: m.platform };
+}
+
+/**
+ * Delete the folders of dispatches that finished more than `days` ago. In-flight and unreadable ones are always kept.
+ * Stage artifacts live in the workflow database, so this only drops prompts, raw output and frozen-test backups.
+ * `dryRun` lists what would go without deleting.
+ */
+export function pruneDispatches(days: number, dryRun = false): { removed: string[]; kept: number } {
+  const root = join(dataDir(), "dispatches");
+  const removed: string[] = [];
+  let kept = 0;
+  if (!existsSync(root)) return { removed, kept };
+  const cutoff = Date.now() - days * 86_400_000;
+  for (const id of readdirSync(root)) {
+    try {
+      const m = readDispatchMeta(id);
+      const t = Date.parse(m.finished_at ?? "") || 0;
+      if (m.status === "in-flight" || !t || t > cutoff) { kept++; continue; }
+      if (!dryRun) rmSync(dispatchDir(id), { recursive: true, force: true });
+      removed.push(id);
+    } catch { kept++; }
+  }
+  return { removed, kept };
 }

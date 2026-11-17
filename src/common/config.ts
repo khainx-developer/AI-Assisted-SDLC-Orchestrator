@@ -37,6 +37,8 @@ export interface OrchestratorConfig {
   scope_allow?: string[];
   platforms: Record<string, PlatformOverride>;
   dispatch_timeout_minutes: number;
+  /** finished dispatch folders (prompt, raw output) older than this are deleted when the dispatch server starts; 0 keeps everything */
+  dispatch_retention_days?: number;
   /** directory holding SKILL.md folders; defaults to bundled orchestrator-agent/skills */
   skills_dir?: string;
 }
@@ -45,6 +47,7 @@ export const DEFAULT_CONFIG: OrchestratorConfig = {
   default_platform: "claude",
   platforms: {},
   dispatch_timeout_minutes: 30,
+  dispatch_retention_days: 14,
 };
 
 export function loadConfig(): OrchestratorConfig {
