@@ -22,6 +22,8 @@ export interface EvalChecks {
   min_questions?: number;
   /** no `- [a, b, c]` bracketed lists: the skills ask for one bullet per item */
   bullets_not_bracketed?: boolean;
+  /** at least this many code citations of the form `path:line` or `path:10-24` (knowledge skills must cite the code) */
+  min_citations?: number;
   /** the artifact must be exactly this text (task-breakdown's "no split" answer) */
   exact?: string;
   max_chars?: number;
@@ -86,6 +88,10 @@ export function checkArtifact(artifact: string, c: EvalChecks): CheckResult {
     if (n < c.min_questions) f.push(`needs at least ${c.min_questions} open question(s), found ${n}`);
   }
   if (c.bullets_not_bracketed) for (const l of md.split(NL)) if (/^\s*[-*]\s+\[[^\]]*,[^\]]*\]\s*$/.test(l)) f.push(`bracketed list instead of bullets: ${l.trim().slice(0, 60)}`);
+  if (c.min_citations) {
+    const n = (md.match(/`[^`\s:]+(?:\/[^`\s:]+)*:\d+(?:-\d+)?`/g) ?? []).length;
+    if (n < c.min_citations) f.push(`needs at least ${c.min_citations} code citation(s) like \`path:line\`, found ${n}`);
+  }
   if (c.max_chars && md.length > c.max_chars) f.push(`too long: ${md.length} characters (limit ${c.max_chars})`);
   return { pass: !f.length, failures: f };
 }

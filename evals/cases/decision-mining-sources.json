@@ -1,0 +1,19 @@
+{
+  "name": "decision-mining-sources",
+  "skill": "decision-mining",
+  "instructions": "Mine decisions for repository shop.\nCommit: 0123abc\nModules from the survey: Orders core, Shop API.\n\nSources\n\n1. File docs/notes.md (read it). \n\n2. Finished story document, task task_1 design.v2 (the story was implemented and merged):\n# Design: Place orders through the core service\n## Chosen Approach\nThe API must call OrderService in Shop.Core and never talk to a payment gateway directly.\n## Reason for choice\nKeeps payment rules in one place.\n## Alternatives considered\n- Call the gateway from the API - rejected because rules would be duplicated.\n\n3. Commit message (history): \"SHOP-12 use queue for email sending\" with no further text.\n\n4. Fact from the scan: Shop.Legacy targets netcoreapp3.1.\n\n5. In-flight note in a document: do not merge this with task_9, which is still being built.",
+  "files": {
+    "docs/notes.md": "# Notes\n\nWe decided to keep all money rules in Shop.Core. See Shop.Core/OrderService.cs.\n",
+    "Shop.Core/OrderService.cs": "public class OrderService {\n  public bool Place(Order o) { return o.Total > 0; }\n}\n"
+  },
+  "checks": {
+    "title_prefix": "# Decision candidates:",
+    "headings": ["Decisions", "Not recorded as decisions", "Open Questions"],
+    "must_include": ["Basis: stated", "Basis: inferred", "Source:", "Shop.Core"],
+    "must_not_match": ["### D\\d+\\..*task_9"],
+    "min_citations": 1,
+    "min_questions": 1,
+    "open_questions": "labelled",
+    "bullets_not_bracketed": true
+  }
+}

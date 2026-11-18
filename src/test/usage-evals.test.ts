@@ -77,7 +77,7 @@ test("every golden artifact passes its case, and every case has one", () => {
 
 test("every analysis stage skill has at least one eval case", () => {
   const covered = new Set(loadCases().map((c) => c.skill));
-  for (const s of ["requirement-analysis", "design-analysis", "plan-creation", "task-breakdown", "code-review"]) assert.ok(covered.has(s), `no eval case for ${s}`);
+  for (const s of ["requirement-analysis", "design-analysis", "plan-creation", "task-breakdown", "code-review", "repo-survey", "module-analysis", "decision-mining", "claim-verification", "conventions", "domain-rules"]) assert.ok(covered.has(s), `no eval case for ${s}`);
 });
 
 test("the checks reject documents that break the skill's contract", () => {

@@ -1,0 +1,19 @@
+{
+  "name": "domain-rules-orders",
+  "skill": "domain-rules",
+  "instructions": "Extract the domain rules.\nModule: Orders core\nFolders: Shop.Core/, Shop.Core.Tests/\nCommit: 0123abc\nRepository: shop\nSurvey entry: M1. Orders core - order rules and their tests. Kind: library.\nSources: docs/rules.md (read it).",
+  "files": {
+    "docs/rules.md": "# Rules\n\nOrders over 500 get free shipping.\nA cancelled order can be reopened by a manager.\n",
+    "Shop.Core/OrderService.cs": "public class OrderService {\n  public bool Place(Order o) {\n    if (o.Total <= 0) return false;\n    return true;\n  }\n  public decimal Shipping(Order o) {\n    return o.Total > 1000 ? 0m : 9.9m;\n  }\n  public void Cancel(Order o) { o.Status = \"Cancelled\"; }\n}\n",
+    "Shop.Core.Tests/OrderServiceTests.cs": "public class OrderServiceTests {\n  [Fact] public void Rejects_zero_total() { Assert.False(new OrderService().Place(new Order(1, 0))); }\n}\n"
+  },
+  "checks": {
+    "title_prefix": "# Domain rules:",
+    "headings": ["Rules", "States and calculations", "Permissions", "Open Questions"],
+    "must_include": ["Source:", "0123abc", "Basis: implemented", "OrderService.cs", "1000"],
+    "min_citations": 3,
+    "min_questions": 1,
+    "open_questions": "labelled",
+    "bullets_not_bracketed": true
+  }
+}

@@ -209,6 +209,10 @@ node dist/cli.js dispatches prune                         # preview; add --yes t
 # what the AI sessions used
 node dist/cli.js dispatches usage                         # all finished dispatches; --task <task_id> for one story, --days N for recent ones
 
+# repo knowledge pipeline, stage 0 (proposal in docs/knowledge-pipeline.md; no AI, nothing is written into the repo)
+node dist/cli.js knowledge scan --repo D:/work/ProjectA [--since "12 months ago"] [--out <file>] [--exclude <regex>]
+node dist/cli.js knowledge run --repo D:/work/ProjectA [--modules M1,M2|all] [--max-repairs 2] [--max-sessions 40] [--verifier <platform>] [--reuse-survey]   # survey, then per module: write, check, verify, repair (AI sessions cost tokens; see docs/knowledge-pipeline.md)
+
 # skill evals
 node dist/cli.js evals check                              # free and offline: the golden documents must pass their checks
 node dist/cli.js evals run [--case <name>] [--platform <p>] [--model <m>] [--repeat N]   # live: real AI sessions, costs money

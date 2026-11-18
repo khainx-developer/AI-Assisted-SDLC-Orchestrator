@@ -1,0 +1,12 @@
+{
+  "name": "claim-verification-basic",
+  "skill": "claim-verification",
+  "instructions": "Verify these claims.\n\nC1 [Responsibilities] Rejects an order whose total is zero or less.\n  evidence Shop.Core/OrderService.cs:2-3\n    | 2: public bool Place(Order o) {\n    | 3:   if (o.Total <= 0) return false;\n\nC2 [Dependencies] Calls the payment gateway over HTTP to charge the card.\n  evidence Shop.Core/OrderService.cs:2-3\n    | 2: public bool Place(Order o) {\n    | 3:   if (o.Total <= 0) return false;\n\nC3 [Data and configuration] Reads the PAYMENT_GATEWAY_URL environment variable and an Orders table.\n  evidence Shop.Core/OrderService.cs:1\n    | 1: private readonly string _gateway = Environment.GetEnvironmentVariable(\"PAYMENT_GATEWAY_URL\");",
+  "files": {
+    "Shop.Core/OrderService.cs": "private readonly string _gateway = Environment.GetEnvironmentVariable(\"PAYMENT_GATEWAY_URL\");\npublic bool Place(Order o) {\n  if (o.Total <= 0) return false;\n  return true;\n}\n"
+  },
+  "checks": {
+    "must_include": ["C1 | supported", "C2 | unsupported", "C3 | partial"],
+    "must_not_match": ["C2 [|] supported", "C1 [|] (partial|unsupported)"]
+  }
+}

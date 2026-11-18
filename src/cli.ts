@@ -37,7 +37,8 @@ sdlc-orchestrator branch show [--repo <path>]                      branch naming
 sdlc-orchestrator branch set <pattern> [--repo <path>]             e.g. feature/{key}; without --repo sets the global pattern
 sdlc-orchestrator branch reset [--repo <path>]                     back to the default (or the global pattern, for a repo)
 sdlc-orchestrator dispatches usage [--task <id>] [--days N]        token use and cost of finished dispatches
-sdlc-orchestrator evals check                                      offline check of the skill eval cases against their golden artifacts
+sdlc-orchestrator knowledge scan --repo <path> [--since "12 months ago"] [--out <file>] [--exclude <regex>]   facts about a repo, no AI (knowledge pipeline stage 0; see docs/knowledge-pipeline.md)
+sdlc-orchestrator evals check                                   offline check of the skill eval cases against their golden artifacts
 sdlc-orchestrator evals run [--case <n>] [--platform <p>] [--model <m>] [--repeat N]   run the cases through real AI sessions (costs money)
 `;
 
@@ -62,6 +63,71 @@ if (argv[0] === "dispatches") {
   if (!Number.isFinite(days) || days < 0) { console.error("--days must be a number >= 0"); process.exit(1); }
   const r = pruneDispatches(days, !argv.includes("--yes"));
   console.log(`${argv.includes("--yes") ? "removed" : "would remove"} ${r.removed.length} finished dispatch(es) older than ${days} day(s); kept ${r.kept}${argv.includes("--yes") || !r.removed.length ? "" : "; re-run with --yes to delete"}`);
+  process.exit(0);
+}
+if (argv[0] === "knowledge") {
+  const oi = (n: string) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : undefined; };
+  if (argv[1] === "check-survey") {
+    if (!oi("scan") || !oi("survey")) { console.error("usage: knowledge check-survey --scan <scan.json> --survey <survey.md>\n       compares a repo-survey document with the scan: unplaced projects, missing or unsupported dependencies, unmentioned folders. Exit 1 when it finds problems."); process.exit(1); }
+    const { checkSurvey, formatSurveyReport, parseSurvey } = await import("./knowledge/survey-check.js");
+    const md = readFileSync(oi("survey")!, "utf8");
+    const r = checkSurvey(JSON.parse(readFileSync(oi("scan")!, "utf8")), md);
+    console.log(formatSurveyReport(r, Object.fromEntries(parseSurvey(md).map((m) => [m.id, m.name]))) || "survey agrees with the scan");
+    if (r.cross_framework.length) console.log(`\nnote: ${r.cross_framework.length} modern .NET -> .NET Framework project references (the survey should surface this as a risk):\n  ` + r.cross_framework.slice(0, 8).join("\n  "));
+    process.exit(r.ok ? 0 : 1);
+  }
+  if (argv[1] === "claims") {
+    if (!oi("repo") || !oi("module")) { console.error("usage: knowledge claims --repo <path> --module <module.md> [--verdicts <file>]\n       without --verdicts: prints the claim pack (each claim with its cited lines) for the claim-verification skill.\n       with --verdicts: counts the verifier's answers; exit 1 when any claim is partial, unsupported or unanswered."); process.exit(1); }
+    const { extractClaims, formatClaims, parseVerdicts, summariseVerdicts, formatVerdictReport } = await import("./knowledge/claims.js");
+    const claims = extractClaims(oi("repo")!, readFileSync(oi("module")!, "utf8"));
+    if (!oi("verdicts")) { console.log(formatClaims(claims)); process.exit(0); }
+    const r = summariseVerdicts(claims, parseVerdicts(readFileSync(oi("verdicts")!, "utf8")));
+    console.log(formatVerdictReport(r));
+    process.exit(r.ok ? 0 : 1);
+  }
+  if (argv[1] === "run") {
+    if (!oi("repo")) { console.error("usage: knowledge run --repo <path> [--modules M1,M2|all] [--max-repairs 2] [--max-sessions 40] [--verifier <platform>] [--reuse-survey]\n       scan, survey, then for each chosen module: write, check by code, verify claims, repair. Without --modules it stops after the survey and lists the modules. Drafts and manifest.json go to ~/.ai-sdlc-orchestrator/knowledge/<slug>/; nothing is written into the repo. Each AI session costs tokens."); process.exit(1); }
+    const { runKnowledge } = await import("./knowledge/run.js");
+    const { dispatchSession } = await import("./knowledge/session.js");
+    const mods = oi("modules");
+    const m = await runKnowledge({
+      repo: oi("repo")!, modules: mods === undefined ? undefined : mods === "all" ? "all" : mods.split(",").map((s) => s.trim()).filter(Boolean),
+      maxRepairs: oi("max-repairs") ? Number(oi("max-repairs")) : undefined, maxSessions: oi("max-sessions") ? Number(oi("max-sessions")) : undefined,
+      verifier: oi("verifier"), reuseSurvey: argv.includes("--reuse-survey"), log: (l) => console.log(l),
+    }, dispatchSession(oi("repo")!));
+    console.log(`\n${m.sessions} sessions, ${m.tokens.input} tokens in, ${m.tokens.output} out (estimates). ${m.modules.filter((x) => x.status === "clean").length}/${m.modules.length} modules clean.`);
+    for (const x of m.modules.filter((y) => y.status !== "clean")) console.log(`  ${x.id} ${x.status}: ${(x.error ?? x.remaining.join("; ")).slice(0, 200)}`);
+    if (m.modules.some((x) => x.independent_verifier === false)) console.log("note: the verifier ran on the same platform as the writer; set review_platform in config.json or pass --verifier.");
+    process.exit(m.stopped && !m.modules.length && m.survey?.status === "failed" ? 1 : 0);
+  }
+  if (argv[1] === "repair") {
+    if (!oi("repo") || !oi("module")) { console.error("usage: knowledge repair --repo <path> --module <module.md> [--verdicts <file>]\n       prints the REPAIR block (the page plus the problems from check-module and the verdicts) to hand back to the module-analysis skill. Prints nothing and exits 0 when there is nothing to repair."); process.exit(1); }
+    const { checkModule, formatModuleReport } = await import("./knowledge/module-check.js");
+    const { extractClaims, parseVerdicts, summariseVerdicts, repairBlock } = await import("./knowledge/claims.js");
+    const page = readFileSync(oi("module")!, "utf8");
+    const code = formatModuleReport(checkModule(oi("repo")!, page));
+    const v = oi("verdicts") ? summariseVerdicts(extractClaims(oi("repo")!, page), parseVerdicts(readFileSync(oi("verdicts")!, "utf8"))) : null;
+    if (!code && (!v || v.ok)) process.exit(0);
+    console.log(repairBlock(page, code, v));
+    process.exit(0);
+  }
+  if (argv[1] === "check-module") {
+    if (!oi("repo") || !oi("module")) { console.error("usage: knowledge check-module --repo <path> --module <module.md> [--sha <commit>]\n       checks a module-analysis page against the repo: cited files and lines exist, statements cite, names appear in what they cite. Exit 1 when it finds problems."); process.exit(1); }
+    const { checkModule, formatModuleReport } = await import("./knowledge/module-check.js");
+    const r = checkModule(oi("repo")!, readFileSync(oi("module")!, "utf8"), oi("sha"));
+    console.log(formatModuleReport(r) || `module page agrees with the repo (${r.citations} citations)`);
+    process.exit(r.ok ? 0 : 1);
+  }
+  if (argv[1] !== "scan" || !oi("repo")) {
+    console.error("usage: knowledge scan --repo <path> [--since \"12 months ago\"] [--out <file>] [--exclude <regex>]... [--quiet]\n       stage 0 of the knowledge pipeline: facts about the repo gathered by code, no AI. Writes ~/.ai-sdlc-orchestrator/knowledge/<slug>/.meta/scan.json and prints a summary. Nothing is written into the repo.");
+    process.exit(1);
+  }
+  const { scanRepo, writeScan, scanSummary } = await import("./knowledge/scan.js");
+  const exclude = argv.flatMap((a, i) => (a === "--exclude" && argv[i + 1] ? [argv[i + 1]] : []));
+  const scan = scanRepo(oi("repo")!, { since: oi("since"), exclude });
+  const file = writeScan(scan, oi("out"));
+  if (!argv.includes("--quiet")) console.log(scanSummary(scan) + "\n");
+  console.log(`scan written to ${file} (${scan.projects.length} projects, ${scan.files.considered} files considered, ${scan.skipped_secret_like} secret-like files not opened)`);
   process.exit(0);
 }
 if (argv[0] === "evals") {

@@ -52,7 +52,7 @@ server.tool(
 
 server.tool(
   "dispatch_analysis_task",
-  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage document; store it with record_stage_artifact(dispatch_id=...) rather than copying the text (skill_version and platform are recorded from the dispatch).",
+  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation; for the repo knowledge pipeline: repo-survey, module-analysis, domain-rules, conventions, decision-mining, which read the scan under additional_read_roots). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage document; store it with record_stage_artifact(dispatch_id=...) rather than copying the text (skill_version and platform are recorded from the dispatch).",
   {
     task_id: z.string(), project_root: z.string(), stage: z.string(), skill: z.string(), instructions: z.string(),
     additional_read_roots: z.array(z.string()).optional(), platform: platformArg, override_budget: overrideBudgetArg, model: z.string().optional().describe("one-off override of projects.<root>.model and platforms.<id>.model"),

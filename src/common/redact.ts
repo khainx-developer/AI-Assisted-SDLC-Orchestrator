@@ -24,7 +24,7 @@ const RULES: Rule[] = [
   { kind: "bearer-token", re: /\b(Bearer\s+)[A-Za-z0-9._~+/-]{20,}=*/g, keep: 1 },
   { kind: "url-credentials", re: /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, keep: 1 },
   // name = value / name: value, where the name says it is a secret and the value is a real-looking literal (not a placeholder or a call)
-  { kind: "assigned-secret", re: /\b((?:[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|connection[_-]?string)[A-Za-z0-9_.-]*)["']?\s*[:=]\s*["']?)(?![<{$%(]|\*{3}|\[REDACTED)(?![A-Za-z0-9_.-]*\()(?![A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?![\w.]))(?=[^\s"'`,;)}\]]*[A-Za-z])[^\s"'`,;)}\]]{8,}["']?/gi, keep: 1 },
+  { kind: "assigned-secret", re: /\b((?:[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|connection[_-]?string)[A-Za-z0-9_.-]*)["']?\s*[:=]\s*["']?)(?![<{$%(]|\*{3}|\[REDACTED)(?![A-Za-z0-9_.-]*\()(?![A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?![\w.]))(?![A-Za-z_][\w.]*\[)(?=[^\s"'`,;)}\]]*[A-Za-z])[^\s"'`,;)}\]]{8,}["']?/gi, keep: 1 },
 ];
 
 export interface RedactResult {

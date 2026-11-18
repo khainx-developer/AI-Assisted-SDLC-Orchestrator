@@ -4,7 +4,18 @@ Work not done yet, most valuable first. Items come from the community research o
 
 ## To build
 
-Nothing planned. Add items here as they are found.
+From the workflow review of 2026-11-18, most valuable first. Research sources were mostly blogs and preprints, so treat the figures as indicative.
+
+1. **Run all evals live and verify the Claude adapter.** Run the six unrun cases and `evals run --repeat 3`, and try the Claude Code adapter against the real CLI (also covers the restricted-workers check under Done recently). Unblocks every skill change below, because without it an improvement cannot be told from noise. Check the current headless/SDK billing policy first (one source claimed a change in mid-2026; unconfirmed).
+2. **Better independent review.** Research reports frontier models catching only about 15-31% of issues human reviewers flag on a diff alone. Give the reviewer the acceptance criteria as a checklist and let it read callers and tests around the diff. Add a deterministic pass first (lint, typecheck, test coverage of the changed lines). Track how often a human overrules the review; if it approves every time, revisit (see architecture.md decisions).
+3. **Compute triage flags from the repo.** `files_affected` and `has_precedent` are estimated from ticket text and drive the heavy/light split. Add a small read-only dispatch at task creation that computes them, and use the data to check the split.
+4. **Close the review loop.** When review finds problems, send them back to implementation automatically within the retry cap, instead of a human relaying them.
+5. **Tests first as the default for heavy tasks.** Today it is off and only offered for some tasks. Specs define intent, tests define success; heavy tasks already pay for a plan. Add a `bug-repro` skill that writes a failing reproduction before the plan for bug fixes.
+6. **Cost caps per kind.** Per-kind timeout and token cap (analysis stalls should be caught sooner), and a skip-design shortcut when `has_precedent` is true and the change is not breaking.
+7. **Hooks for in-session enforcement (Claude Code).** Block a write outside the plan's scope or a secret read as it happens, instead of failing the dispatch afterwards. Could also give Claude workers structured output and a live tail via the Agent SDK (streaming progress is listed as open in architecture.md).
+8. **Orchestrator prompt eval.** Evals do not run the orchestrator's own system prompt; routing mistakes there cost more than a bad document.
+10. **Repo knowledge pipeline.** A second workflow that extracts architecture, modules and decisions from a target repo into a separate AI factory repo, syncs approved documents to Confluence, and lets BAs check a Jira ticket against them. Full design, build order and open questions: [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md). Start with phase 0 (baseline) and phase 1 (one module). It revisits the "no codemap" decision in architecture.md. **Started 2026-11-18:** stage 0 scanner (`knowledge scan`) and the skills `repo-survey`, `module-analysis`, `decision-mining` with eval cases are built and tested offline; the skills have not run live. Next: run the three eval cases live, then the runner and `knowledge` workflow kind (docs/knowledge-pipeline.md, section 17).
+9. **Archive finished changes as a delta against the repo's spec** (idea borrowed from OpenSpec), so later requirement stages start from what the system does now. Not adopting Spec Kit or OpenSpec themselves.
 
 
 ## Parked

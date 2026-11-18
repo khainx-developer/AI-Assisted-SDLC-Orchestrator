@@ -126,7 +126,10 @@ export function extractArtifact(text: string): string {
   const FENCE = "```";
   const m = [...text.matchAll(/<<<ARTIFACT\s*([\s\S]*?)\s*ARTIFACT>>>/g)].at(-1);
   let body: string;
+  const open = text.lastIndexOf("<<<ARTIFACT");
   if (m) body = m[1];
+  // a model sometimes drops or shortens the closing marker (seen live: "ARTIFACT" without ">>>"); keep everything after the opener
+  else if (open >= 0) body = text.slice(open + "<<<ARTIFACT".length).replace(/\s*ARTIFACT>{0,3}\s*$/, "");
   else {
     const parts = text.split(FENCE);
     // odd-indexed parts are inside fences; drop the optional language tag on the first line

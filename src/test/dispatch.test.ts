@@ -131,6 +131,10 @@ test("extractArtifact: markers, fences and raw text", async () => {
   assert.equal(extractArtifact(`/ Search foo\n${F}\nProblem: y\n${F}`), "Problem: y");
   assert.equal(extractArtifact(`<<<ARTIFACT\n${F}\nProblem: z\n${F}\nARTIFACT>>>`), "Problem: z");
   assert.equal(extractArtifact("Problem: plain"), "Problem: plain");
+  // closing marker dropped or cut short: the opener must not leak into the document
+  assert.equal(extractArtifact("<<<ARTIFACT\n# D: x\n\n## Open Questions\nNone.\nARTIFACT"), "# D: x\n\n## Open Questions\nNone.");
+  assert.equal(extractArtifact("<<<ARTIFACT\n# D: x\nARTIFACT>>"), "# D: x");
+  assert.equal(extractArtifact("<<<ARTIFACT\n# D: x\n"), "# D: x");
 });
 
 test("projectConfig matches a repo regardless of slash and drive-letter spelling", async () => {
