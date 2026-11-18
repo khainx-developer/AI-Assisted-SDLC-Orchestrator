@@ -4,16 +4,16 @@ Work not done yet, most valuable first. Items come from the community research o
 
 ## To build
 
-| # | Item | Why | Notes |
-|---|---|---|---|
-| 1 | **Eval: repo instructions on vs off** | Evidence on whether `AGENTS.md` and context files help is mixed. We inject them into every dispatch without measuring | Run the same cases with and without the injected repo instructions, compare pass rate and tokens. Needs fixture repos that carry an instruction file |
-| 2 | **Untrusted content from worker-side MCP and files** | The untrusted-content notice and redaction cover only prompts this tool builds, not what a worker fetches itself | Decide what is feasible: extend the notice to say fetched content is data, and list this limit prominently in the docs. Full control is not possible from here |
+Nothing planned. Add items here as they are found.
+
 
 ## Parked
 
 - **Worktree per task** for running stories in parallel. Built and tested once, then removed on 2026-11-18: the target repo is about 20 GB, so each story would need a full extra working copy. Revisit with a sparse option (`worktree_sparse`: create the worktree without a checkout, then check out only the listed folders) or if a smaller repo needs parallel stories. Notes from the design: one worktree per task and repo (not per dispatch, so retries see earlier changes), config looked up by the repo and files judged in the worktree, `remove_worktree` that refuses on uncommitted work, `worktree_setup` for ignored files such as `node_modules`.
 
 ## Done recently
+
+- Untrusted content: the warning in every dispatch prompt now also covers what the session fetches or runs itself (web, tool and MCP output, command output), and the README says plainly that this is an instruction to the model, not a control.
 
 - Output scan: warns when a session's printed output or a file it wrote contains a secret-looking string (`secrets_in_output`, `secrets_in_files`). Warning only, same patterns and switch as prompt redaction.
 
