@@ -48,12 +48,24 @@ async function porcelainAll(root: string, repos: string[]): Promise<string[]> {
   return perRepo.flat();
 }
 
-export async function ensureBranch(cwd: string, branch: string) {
+/** A usable start point for a new branch: the local branch, else its origin copy. Throws a clear error when neither exists. */
+export async function resolveBase(cwd: string, base: string): Promise<string> {
+  for (const ref of [base, `origin/${base}`]) {
+    try { await git(cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`); return ref; } catch { /* try the next */ }
+  }
+  throw new Error(`base branch '${base}' does not exist in ${cwd} (neither locally nor as origin/${base}). Create or fetch it, or change the task's base with set_task_base.`);
+}
+
+/** Check out the task branch in place. A branch that does not exist yet is created from `base` when given, else from what is checked out. */
+export async function ensureBranch(cwd: string, branch: string, base?: string | null) {
   await git(cwd, "rev-parse", "--is-inside-work-tree");
   const current = await git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
   if (current === branch) return;
-  try { await git(cwd, "rev-parse", "--verify", branch); await git(cwd, "checkout", branch); }
-  catch { await git(cwd, "checkout", "-b", branch); }
+  let exists = true;
+  try { await git(cwd, "rev-parse", "--verify", `refs/heads/${branch}`); } catch { exists = false; }
+  if (exists) await git(cwd, "checkout", branch);
+  else if (base) await git(cwd, "checkout", "-b", branch, await resolveBase(cwd, base));
+  else await git(cwd, "checkout", "-b", branch);
 }
 
 /**

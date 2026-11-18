@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   dispatch_id TEXT,
   dispatch_status TEXT CHECK (dispatch_status IN ('in-flight','completed','failed')),
   target_files_json TEXT,
+  base_branch TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

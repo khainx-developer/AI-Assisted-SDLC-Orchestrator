@@ -17,7 +17,7 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 | Policy | `get_policy`, `update_policy` (validated; a bad patch is rejected) |
 | Edge cases and search | `record_edge_case`, `search_precedent`, `list_zero_hit_searches` |
 | Review prompt | `get_review_signal` (is an `edge-case-review` due: problems since the last review vs `edge_case_review_after`), `mark_edge_cases_reviewed` |
-| Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap`, `update_linked_refs` |
+| Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap` (also says whether the other story has the same `base_branch`), `update_linked_refs`, `set_task_base` |
 | Spec proven wrong | `report_spec_wrong` (sends a task back to plan / design / requirement with the issue as an open question) |
 | Learnings | `read_learnings`, `write_learning`, `remove_learning` (see [learnings.md](learnings.md)) |
 
@@ -29,7 +29,7 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 |---|---|
 | `dispatch_analysis_task` | Read-only session running a stage skill (requirement, design, plan, breakdown). Gets learnings and the repo's own instruction files injected |
 | `dispatch_test_authoring_task` | Optional tests-first step: read+write session that writes only the failing tests; the files it wrote are frozen for the coding session |
-| `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`). Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
+| `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`), in the repo checkout, starting a new branch from the task's `base_branch`. Refused while another task's write session is running in the same repo. Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
 | `dispatch_review_task` | Optional independent code review: read-only session on a different platform or model than the coder (`review_platform` in config.json), given the branch diff against `base_branch` (default `main`, else `master`) plus the requirement and plan as `context`. The call reports `independent` and why; the result's `artifact` is the review (verdict, findings, plan compliance, tests). Advice only, not recorded as a stage document |
 | `run_tests` | Runs the repo's test command. `expect_fail` adds a `verdict` (red / vacuous / broken) for tests written first |
 | `get_repo_settings` | `tests_first`, `scope_check`, `scope_allow` and test command for a repo |

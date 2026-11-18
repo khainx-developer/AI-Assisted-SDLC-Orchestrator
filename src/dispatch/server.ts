@@ -11,6 +11,7 @@ import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
+import { prepareCheckout } from "./checkout.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
 
 const server = new McpServer({ name: "dispatch", version: "0.1.0" });
@@ -29,6 +30,7 @@ function pickPlatform(mode: "analysis" | "coding", root: string, explicit?: stri
 }
 
 const overrideBudgetArg = z.boolean().optional().describe("only after the human agreed: go ahead although the task is over its budget (see budget in config.json)");
+const baseArg = z.string().nullish().describe("use `base_branch` from get_task_state: a new task branch starts from it. Ignored when the branch already exists");
 const platformArg = z.string().nullish().describe("AI platform for this dispatch (claude | copilot | cursor | any id declared in config.json). Omit or pass null to use configured routing.");
 
 server.tool(
@@ -113,13 +115,14 @@ server.tool(
   {
     task_id: z.string(), project_root: z.string(), branch: z.string().describe("use `branch` from get_task_state"),
     instructions: z.string().describe("the plan's Test Plan and the requirement's acceptance criteria; the repo's test conventions are found by the session itself"),
+    base_branch: baseArg,
     test_paths: z.array(z.string()).optional().describe("where tests belong (files, dirs or globs). Files written elsewhere are reported as scope_violation; those inside become the frozen set"),
     additional_read_roots: z.array(z.string()).optional(), platform: platformArg, override_budget: overrideBudgetArg, model: z.string().optional().describe("a smaller model is usually enough for this step"),
   },
   (a) => run(async () => {
     if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch work onto main/master");
     requireGitRepo(a.project_root);
-    await ensureBranch(a.project_root, a.branch);
+    await prepareCheckout(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
       kind: "test-authoring", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, testPaths: a.test_paths,
@@ -136,6 +139,7 @@ server.tool(
     task_id: z.string(), project_root: z.string(), stage: z.string(), branch: z.string().describe("use `branch` from get_task_state (named by branch_pattern in config.json, default story/{key}); if get_task_state shows branch_error, report it instead of dispatching"),
     instructions: z.string(), target_files: z.array(z.string()).optional().describe("the plan's 'Files touched': files, directories or globs this session may change"),
     additional_read_roots: z.array(z.string()).optional(),
+    base_branch: baseArg,
     frozen_from_dispatch: z.string().optional().describe("dispatch_id of a completed dispatch_test_authoring_task of this task; its test files are frozen"),
     platform: platformArg, override_budget: overrideBudgetArg, model: z.string().optional(),
   },
@@ -143,7 +147,7 @@ server.tool(
     if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch coding work onto main/master");
     requireGitRepo(a.project_root);
     const frozenFiles = a.frozen_from_dispatch ? frozenFilesFrom(a.task_id, a.frozen_from_dispatch) : undefined;
-    await ensureBranch(a.project_root, a.branch);
+    await prepareCheckout(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
       kind: "coding", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, targetFiles: a.target_files, frozenFiles,

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dataDir, normRoot } from "../common/paths.js";
@@ -37,6 +38,8 @@ export class Workflow {
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
     this.db.exec(SCHEMA);
     this.migrateArtifactsToFiles();
+    const taskCols = this.db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+    if (!taskCols.some((c) => c.name === "base_branch")) this.db.exec("ALTER TABLE tasks ADD COLUMN base_branch TEXT");
     // one-time normalisation of roots stored before normRoot existed
     for (const table of ["tasks", "search_fts"]) {
       const roots = this.db.prepare(`SELECT DISTINCT project_root AS r FROM ${table}`).all() as { r: string }[];
@@ -94,6 +97,7 @@ export class Workflow {
       dispatch_id: r.dispatch_id as string | null,
       dispatch_status: r.dispatch_status as string | null,
       target_files: (p(r.target_files_json) ?? []) as string[],
+      base_branch: (r.base_branch ?? null) as string | null,
       created_at: r.created_at as string,
       updated_at: r.updated_at as string,
     };
@@ -113,6 +117,8 @@ export class Workflow {
     parent_task_id?: string;
     related_repos?: string[];
     coordinated_release?: boolean;
+    /** the branch this story's work branches from and is reviewed against; default: what the repo has checked out right now */
+    base_branch?: string;
   }) {
     const pol = this.policy();
     if (a.parent_task_id) {
@@ -130,16 +136,39 @@ export class Workflow {
     this.db
       .prepare(
         `INSERT INTO tasks (task_id,project_root,parent_task_id,title,description,source,stage,stage_entered_at,
-      flags_json,linked_refs_json,related_repos_json,coordinated_release,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      flags_json,linked_refs_json,related_repos_json,coordinated_release,base_branch,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         id, normRoot(a.project_root), a.parent_task_id ?? null, a.title, a.description ?? null, a.source, stage, t,
-        j(a.flags), j(a.linked_refs ?? {}), j(a.related_repos ?? []), a.coordinated_release ? 1 : 0, t, t
+        j(a.flags), j(a.linked_refs ?? {}), j(a.related_repos ?? []), a.coordinated_release ? 1 : 0, a.base_branch?.trim() || this.currentBase(a.project_root), t, t
       );
     this.db
       .prepare("INSERT INTO transitions (task_id,from_stage,to_stage,reason,policy_version,created_at) VALUES (?,?,?,?,?,?)")
       .run(id, null, stage, `triage: ${heavy ? "heavy" : "light"} pipeline`, policyVersion(pol), t);
     return this.getTask(id);
+  }
+
+  /**
+   * The branch a new story should start from when nobody said: what the repo has checked out now. If that is the branch of another
+   * unfinished task of the repo (the human left the checkout on a story branch), use that task's own base instead, so a story is
+   * never based on another story by accident. Null when there is no branch (detached HEAD, not a git repo).
+   */
+  private currentBase(project_root: string): string | null {
+    let current: string;
+    try { current = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: project_root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+    catch { return null; }
+    if (!current || current === "HEAD") return null;
+    const other = this.listPending(project_root).find((t) => t.branch === current);
+    return other ? other.base_branch : current;
+  }
+
+  /** Change where a story's work branches from. Only affects a branch that does not exist yet. */
+  setBase(task_id: string, base_branch: string) {
+    this.row(task_id);
+    const b = base_branch.trim();
+    if (!b || /[\s~^:?*[\]\\]|\.\.|^-/.test(b)) throw new WorkflowError(`'${base_branch}' is not a valid branch name`);
+    this.db.prepare("UPDATE tasks SET base_branch=?, updated_at=? WHERE task_id=?").run(b, now(), task_id);
+    return this.getTask(task_id);
   }
 
   getTask(task_id: string) {
@@ -408,7 +437,7 @@ export class Workflow {
     const t = this.shape(this.row(task_id));
     return this.listPending(t.project_root)
       .filter((o) => o.task_id !== task_id)
-      .map((o) => ({ task_id: o.task_id, title: o.title, files: o.target_files.filter((f) => files.includes(f)) }))
+      .map((o) => ({ task_id: o.task_id, title: o.title, base_branch: o.base_branch, same_base: o.base_branch === t.base_branch, files: o.target_files.filter((f) => files.includes(f)) }))
       .filter((o) => o.files.length);
   }
 

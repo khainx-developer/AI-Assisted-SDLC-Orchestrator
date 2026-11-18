@@ -39,10 +39,16 @@ server.tool(
     source: z.enum(["jira", "adhoc"]), flags: Flags,
     linked_refs: z.record(z.string(), z.any()).optional(), parent_task_id: z.string().optional(),
     related_repos: z.array(z.string()).optional(), coordinated_release: z.boolean().optional(),
+    base_branch: z.string().optional().describe("branch this story starts from and is reviewed against. Omit it to use what the repo has checked out now (the human's 'I am on dev, start story A'); the result's base_branch says what was chosen"),
   },
   (a) => run(() => wf.createTask(a))
 );
 server.tool("get_task_state", "Stage, flags, history, branch, children, artifacts and last edge case.", { task_id: tid }, (a) => run(() => wf.getTask(a.task_id)));
+server.tool(
+  "set_task_base", "Change the branch a story starts from, e.g. the human says 'no, base it on release'. Only matters before the task branch exists; an existing branch is not rebased.",
+  { task_id: tid, base_branch: z.string() },
+  (a) => run(() => wf.setBase(a.task_id, a.base_branch))
+);
 server.tool("find_task", "Resume lookup by task_id, Jira key or PR number.", { ref: z.string() }, (a) => run(() => wf.findTask(a.ref)));
 server.tool("list_pending_tasks", "Non-terminal tasks for a repo.", { project_root: z.string() }, (a) => run(() => wf.listPending(a.project_root)));
 server.tool("list_child_tasks", "Children created by task-breakdown.", { task_id: tid }, (a) => run(() => wf.listChildren(a.task_id)));
@@ -129,7 +135,7 @@ server.tool(
   { task_id: tid, dispatch_id: z.string().nullable(), status: z.enum(["in-flight", "completed", "failed"]).nullable(), target_files: z.array(z.string()).optional() },
   (a) => run(() => wf.setDispatch(a.task_id, a.dispatch_id, a.status, a.target_files))
 );
-server.tool("check_file_overlap", "Pending tasks on the same repo touching any of these files.", { task_id: tid, files: z.array(z.string()) }, (a) => run(() => wf.fileOverlaps(a.task_id, a.files)));
+server.tool("check_file_overlap", "Other pending tasks on the same repo touching any of these files. same_base=false means the two stories branch from different branches, so they only meet if both are merged into one place later.", { task_id: tid, files: z.array(z.string()) }, (a) => run(() => wf.fileOverlaps(a.task_id, a.files)));
 server.tool("search_precedent", "FTS5 search over past artifacts and edge cases.", { query: z.string(), project_root: z.string().optional(), limit: z.number().optional() }, (a) => run(() => wf.searchPrecedent(a.query, a.project_root, a.limit)));
 
 server.tool(

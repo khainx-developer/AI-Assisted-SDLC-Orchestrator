@@ -239,6 +239,12 @@ Everything lives in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
 | `dispatches/` | One folder per worker session: the prompt sent, raw output, status. Finished ones older than `dispatch_retention_days` (default 14, `0` keeps all) are deleted when the dispatch server starts; running ones never are. Stage documents are not affected (they live in `artifacts/`) |
 | `backups/` | Daily copy of `workflow.db`, `learnings/` and `artifacts/`, newest 14 kept |
 
+### Two stories from different branches
+
+Every task has a `base_branch`: the branch its work starts from and is reviewed against. You normally do not set it. Check out the branch you want, open the chat and say "start story A": the task records what is checked out (`dev`). Later switch to `release` and say "start story B": that one records `release`. To say it in words instead, "start story B based on `release`". If you left the checkout on a story branch, the next story takes that story's base, never the story branch itself. The orchestrator tells you which base it picked, and "base it on X" changes it before work starts.
+
+Stories share the repo checkout, so only one can have a coding session running at a time. The server refuses to start a second story's coding session until the first finishes, because switching branches under a running session would break it. While a session runs, leave the checkout alone. Stories with different bases cannot conflict until you merge both into one branch; the file-overlap check tells you when two stories touch the same files and whether their bases match. Running two stories truly in parallel needs a separate folder per story (a git worktree). That is not built, mainly because a very large repo would need a full extra working copy each; see BACKLOG.md.
+
 **Branch names.** Coding work always runs on its own branch, created automatically from whatever is checked out. The default name is `story/<Jira key or task id>` (the installer writes it to `config.json` as `branch_pattern`; it never overwrites one you set). To follow your team's convention, run `node dist/cli.js branch set "feature/{key}" --repo <path>` (see Commands; it validates the pattern and shows an example name), or set `branch_pattern` globally or per repo in `config.json` yourself:
 ```json
 {

@@ -297,3 +297,39 @@ test("review signal: counts edge cases and exhausted retries per repo, honours t
   updatePolicy({ edge_case_review_after: 0 });
   assert.equal(wf.reviewSignal("/sig").due, false, "0 turns the prompt off");
 });
+
+test("base branch: defaults to what the repo has checked out, never to another story's branch; explicit wins; overlaps say whether the bases match", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  writeFileSync(join(process.env.SDLC_DATA_DIR!, "config.json"), "{}"); // an earlier test leaves a bad branch_pattern behind
+  const repo = join(tmpdir(), `sdlc-base-${Date.now()}`);
+  mkdirSync(repo);
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "dev");
+  git("commit", "-q", "--allow-empty", "-m", "init");
+  const wf = new Workflow();
+  const mk = (title: string, extra: object = {}) => wf.createTask({ project_root: repo, title, source: "adhoc", flags: light, ...extra });
+
+  const a = mk("story A");
+  assert.equal(a.base_branch, "dev", "on dev, so story A is based on dev");
+
+  git("checkout", "-q", "-b", a.branch!); // the human leaves the checkout on story A's branch
+  assert.equal(mk("story C").base_branch, "dev", "not based on story A's branch");
+
+  git("checkout", "-q", "-b", "release", "dev");
+  const b = mk("story B");
+  assert.equal(b.base_branch, "release");
+  assert.equal(mk("story D", { base_branch: "hotfix" }).base_branch, "hotfix", "an explicit base wins");
+
+  assert.equal(wf.setBase(b.task_id, "release-2").base_branch, "release-2");
+  assert.throws(() => wf.setBase(b.task_id, "bad name"), /not a valid branch name/);
+  assert.throws(() => wf.setBase(b.task_id, "a..b"), /not a valid branch name/);
+
+  wf.setDispatch(a.task_id, "d1", "completed", ["src/x.ts"]);
+  wf.setDispatch(b.task_id, "d2", "completed", ["src/x.ts"]);
+  const o = wf.fileOverlaps(b.task_id, ["src/x.ts"]);
+  assert.equal(o.length, 1);
+  assert.equal(o[0].same_base, false, "dev vs release: they only meet if merged into one place later");
+
+  assert.equal(wf.createTask({ project_root: join(tmpdir(), "not-a-repo-xyz"), title: "t", source: "adhoc", flags: light }).base_branch, null);
+});
