@@ -1,5 +1,6 @@
 import type { PlatformOverride } from "../common/config.js";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import type { Restrictions, RestrictionsReport } from "../common/restrictions.js";
 
 /**
  * A platform adapter turns a platform-neutral request into one headless CLI invocation of that
@@ -15,12 +16,18 @@ export interface DispatchRequest {
   projectRoot: string;
   extraReadRoots: string[];
   model?: string;
+  /** secret files, commands and sandbox this session must not use; undefined = none */
+  restrictions?: Restrictions;
 }
 
 export interface Invocation {
   command: string;
   args: string[];
   stdin?: string;
+  /** files the runner writes before starting the CLI (e.g. a settings file passed by path, which avoids shell-quoting JSON) */
+  files?: { path: string; content: string }[];
+  /** what was enforced and what this CLI cannot enforce */
+  restrictions?: RestrictionsReport;
 }
 
 export interface Platform {
@@ -42,6 +49,32 @@ export interface Platform {
 
 const READ_TOOLS = ["Read", "Grep", "Glob", "WebSearch", "WebFetch"];
 
+/**
+ * Claude Code takes permission rules through a settings file (`--settings <path>`): deny rules beat every allow, including
+ * --allowedTools. A Read deny also covers file commands it recognises in Bash (cat, head, tail), but not a script that opens the
+ * file itself, so the sandbox is the real boundary, and it is not available on native Windows.
+ */
+function claudeRestrictions(req: DispatchRequest): { settings?: { path: string; content: string }; report: RestrictionsReport } {
+  const x = req.restrictions;
+  const report: RestrictionsReport = { applied: [], not_enforced: [] };
+  if (!x?.enabled) return { report };
+  const deny: string[] = [];
+  for (const p of x.deny_read) deny.push(`Read(${p})`, `Edit(${p})`);
+  if (x.deny_read.length) report.applied.push(`deny_read (${x.deny_read.length} patterns)`);
+  const settings: Record<string, unknown> = {};
+  if (req.mode === "coding") {
+    for (const c of x.deny_commands) deny.push(`Bash(${c} *)`);
+    if (x.deny_commands.length) report.applied.push(`deny_commands (${x.deny_commands.length})`);
+    if (x.sandbox) {
+      settings.sandbox = { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true };
+      report.applied.push("sandbox (the session fails if the platform has none)");
+    }
+  }
+  if (!deny.length && !Object.keys(settings).length) return { report };
+  settings.permissions = { deny };
+  return { settings: { path: join(dirname(req.promptFile), "restrictions.settings.json"), content: JSON.stringify(settings, null, 2) }, report };
+}
+
 const claude: Platform = {
   id: "claude", label: "Claude Code", command: "claude", enforcesReadOnly: true, promptVia: "stdin", supportsAddDir: true,
   build(req, ov) {
@@ -53,7 +86,9 @@ const claude: Platform = {
     } else {
       args.push("--permission-mode", "acceptEdits", "--allowedTools", "Bash,Read,Grep,Glob,Edit,Write");
     }
-    return { command: ov.command ?? "claude", args: [...args, ...(ov.extra_args ?? [])], stdin: req.prompt };
+    const r = claudeRestrictions(req);
+    if (r.settings) args.push("--settings", r.settings.path);
+    return { command: ov.command ?? "claude", args: [...args, ...(ov.extra_args ?? [])], stdin: req.prompt, files: r.settings ? [r.settings] : undefined, restrictions: r.report };
   },
   parseOutput(out) {
     try {
@@ -83,7 +118,19 @@ const copilot: Platform = {
     for (const d of req.extraReadRoots) args.push("--add-dir", d);
     if (req.mode === "analysis") args.push("--deny-tool", "write", "--deny-tool", "shell");
     else args.push("--allow-all-tools");
-    return { command: ov.command ?? "copilot", args: [...args, ...(ov.extra_args ?? [])] };
+    // deny rules win over every allow, --allow-all-tools included. read()/write() rules cover Copilot's own file tools, not shell commands.
+    const x = req.restrictions;
+    const report: RestrictionsReport = { applied: [], not_enforced: [] };
+    if (x?.enabled) {
+      for (const p of x.deny_read) args.push("--deny-tool", `read(${p})`, "--deny-tool", `write(${p})`);
+      if (x.deny_read.length) report.applied.push(`deny_read (${x.deny_read.length} patterns; Copilot's file tools only, not shell commands)`);
+      if (req.mode === "coding") {
+        for (const c of x.deny_commands) args.push("--deny-tool", `shell(${c})`);
+        if (x.deny_commands.length) report.applied.push(`deny_commands (${x.deny_commands.length}; matched by command and first subcommand)`);
+        if (x.sandbox) { args.push("--sandbox"); report.applied.push("sandbox (--sandbox)"); }
+      }
+    }
+    return { command: ov.command ?? "copilot", args: [...args, ...(ov.extra_args ?? [])], restrictions: report };
   },
   parseOutput: (o) => o,
 };
@@ -97,7 +144,16 @@ const cursor: Platform = {
     const args = ["-p", promptArg, "--output-format", "text", "--trust"];
     if (req.model ?? ov.model) args.push("--model", (req.model ?? ov.model)!);
     if (req.mode === "coding") args.push("--force");
-    return { command: ov.command ?? "cursor-agent", args: [...args, ...(ov.extra_args ?? [])] };
+    // Cursor takes deny rules only from its own config files (~/.cursor/cli-config.json, <repo>/.cursor/cli.json). This tool never edits
+    // those, so the only restriction it can pass is the sandbox flag.
+    const x = req.restrictions;
+    const report: RestrictionsReport = { applied: [], not_enforced: [] };
+    if (x?.enabled) {
+      if (req.mode === "coding" && x.sandbox) { args.push("--sandbox", "enabled"); report.applied.push("sandbox (--sandbox enabled)"); }
+      if (x.deny_read.length) report.not_enforced.push("deny_read: Cursor only reads deny rules from its own config files; add Read(...) entries to ~/.cursor/cli-config.json yourself");
+      if (req.mode === "coding" && x.deny_commands.length) report.not_enforced.push("deny_commands: same, add Shell(...) entries to Cursor's config");
+    }
+    return { command: ov.command ?? "cursor-agent", args: [...args, ...(ov.extra_args ?? [])], restrictions: report };
   },
   parseOutput: (o) => o,
 };
@@ -110,7 +166,10 @@ const generic: Platform = {
     const sub = (s: string) =>
       s.replaceAll("{prompt}", promptArg).replaceAll("{prompt_file}", req.promptFile).replaceAll("{mode}", req.mode)
         .replaceAll("{model}", req.model ?? ov.model ?? "").replaceAll("{project_root}", req.projectRoot);
-    return { command: ov.command, args: (ov.args ?? []).map(sub), stdin: (ov.prompt_via ?? "stdin") === "stdin" ? req.prompt : undefined };
+    const x = req.restrictions;
+    const report: RestrictionsReport = { applied: [], not_enforced: [] };
+    if (x?.enabled && (x.deny_read.length || (req.mode === "coding" && (x.deny_commands.length || x.sandbox)))) report.not_enforced.push("a custom CLI has no restriction support here: secret-file and command rules, and the sandbox, are not applied");
+    return { command: ov.command, args: (ov.args ?? []).map(sub), stdin: (ov.prompt_via ?? "stdin") === "stdin" ? req.prompt : undefined, restrictions: report };
   },
   parseOutput: (o) => o,
 };

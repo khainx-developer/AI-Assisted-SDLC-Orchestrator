@@ -6,16 +6,18 @@ Work not done yet, most valuable first. Items come from the community research o
 
 | # | Item | Why | Notes |
 |---|---|---|---|
-| 1 | **Sandbox option for coding sessions** | Coding sessions run with the user's full access. Sources say sandboxing is off by default in most tools, and detection of prompt injection does not work | Optional per platform: restricted CLI permissions first (cheap), container later. Never claim isolation the platform does not give. Document what each platform can and cannot restrict |
-| 2 | **Eval: repo instructions on vs off** | Evidence on whether `AGENTS.md` and context files help is mixed. We inject them into every dispatch without measuring | Run the same cases with and without the injected repo instructions, compare pass rate and tokens. Needs fixture repos that carry an instruction file |
-| 3 | **Untrusted content from worker-side MCP and files** | The untrusted-content notice and redaction cover only prompts this tool builds, not what a worker fetches itself | Decide what is feasible: extend the notice to say fetched content is data, and list this limit prominently in the docs. Full control is not possible from here |
-| 4 | **Secrets kept out of the model's context** | Redaction removes strings from our prompt only. A worker can still read `.env` files | Investigate a per-platform deny list for secret files. Document the limit if a platform cannot do it |
+| 1 | **Eval: repo instructions on vs off** | Evidence on whether `AGENTS.md` and context files help is mixed. We inject them into every dispatch without measuring | Run the same cases with and without the injected repo instructions, compare pass rate and tokens. Needs fixture repos that carry an instruction file |
+| 2 | **Untrusted content from worker-side MCP and files** | The untrusted-content notice and redaction cover only prompts this tool builds, not what a worker fetches itself | Decide what is feasible: extend the notice to say fetched content is data, and list this limit prominently in the docs. Full control is not possible from here |
 
 ## Parked
 
 - **Worktree per task** for running stories in parallel. Built and tested once, then removed on 2026-11-18: the target repo is about 20 GB, so each story would need a full extra working copy. Revisit with a sparse option (`worktree_sparse`: create the worktree without a checkout, then check out only the listed folders) or if a smaller repo needs parallel stories. Notes from the design: one worktree per task and repo (not per dispatch, so retries see earlier changes), config looked up by the repo and files judged in the worktree, `remove_worktree` that refuses on uncommitted work, `worktree_setup` for ignored files such as `node_modules`.
 
 ## Done recently
+
+- Output scan: warns when a session's printed output or a file it wrote contains a secret-looking string (`secrets_in_output`, `secrets_in_files`). Warning only, same patterns and switch as prompt redaction.
+
+- Restricted workers: secret-file and command deny rules per platform (Claude, Copilot enforced; Cursor and custom CLIs reported as not enforced) plus an optional sandbox. Not yet tried against a real session: check that Claude honours `--settings` deny rules with `acceptEdits`, that Copilot accepts the `read()`/`write()` rule forms, and that `--sandbox` behaves in `-p` runs.
 
 - Per-task `base_branch` (defaults to the checked-out branch) and a guard against two write sessions sharing one checkout.
 

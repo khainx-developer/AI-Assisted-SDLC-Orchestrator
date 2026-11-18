@@ -7,6 +7,8 @@
  * Only counts per kind are ever stored or shown, never the removed values.
  */
 
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { redactSettings } from "./config.js";
 
 interface Rule { kind: string; re: RegExp; /** keep this capture group (the key name) and replace the rest */ keep?: number }
@@ -47,6 +49,31 @@ export function redactSecrets(text: string, extra: string[] = []): RedactResult 
     });
   }
   return { text: out, counts };
+}
+
+const MAX_SCAN_FILES = 200;
+const MAX_SCAN_BYTES = 1024 * 1024;
+
+/**
+ * Secret-looking strings in files a coding session wrote or changed: path -> kind -> count (never the values).
+ * A warning, not a block: test fixtures and docs legitimately contain fake keys. Skips unreadable, binary and very large files.
+ */
+export function scanFilesForSecrets(root: string, files: string[], extra: string[] = []): { found: Record<string, Record<string, number>>; scanned: number; skipped: number } {
+  const found: Record<string, Record<string, number>> = {};
+  let scanned = 0, skipped = Math.max(0, files.length - MAX_SCAN_FILES);
+  for (const f of files.slice(0, MAX_SCAN_FILES)) {
+    try {
+      const abs = join(root, f);
+      const st = statSync(abs);
+      if (!st.isFile() || st.size > MAX_SCAN_BYTES) { skipped++; continue; }
+      const buf = readFileSync(abs);
+      if (buf.includes(0)) { skipped++; continue; } // binary
+      scanned++;
+      const { counts } = redactSecrets(buf.toString("utf8"), extra);
+      if (Object.keys(counts).length) found[f] = counts;
+    } catch { skipped++; } // deleted or unreadable: nothing to scan
+  }
+  return { found, scanned, skipped };
 }
 
 /** Redact a prompt according to the repo's settings. Returns null when redaction is switched off for this repo. */

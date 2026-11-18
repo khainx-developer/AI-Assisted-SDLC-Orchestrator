@@ -54,6 +54,12 @@ export interface DispatchMeta {
   prompt_chars?: number;
   /** secret-looking strings removed from the prompt before it was sent: kind -> count (never the values) */
   redacted?: Record<string, number>;
+  /** secret-looking strings in what the session printed (kind -> count). A warning: the text is stored as printed */
+  secrets_in_output?: Record<string, number>;
+  /** coding: secret-looking strings in the files the session wrote or changed (path -> kind -> count). A warning, never a block */
+  secrets_in_files?: Record<string, Record<string, number>>;
+  /** what the platform adapter enforced for this session (secret-file and command denials, sandbox) and what it could not */
+  restrictions?: { applied: string[]; not_enforced: string[] };
   /** token use (and cost where the CLI reports it); set when the session ends */
   usage?: DispatchUsage;
   /** set when this dispatch left its task at or over the configured budget */

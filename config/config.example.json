@@ -6,6 +6,7 @@
   "branch_pattern": "story/{key}",
   "scope_check": "warn",
   "redact_secrets": true,
+  "restrictions": { "deny_read": ["config/prod-secrets.json"], "deny_commands": ["curl"], "sandbox": false },
   "budget": { "task_tokens": 400000, "action": "warn" },
   "redact_extra": ["ACME-[0-9a-f]{16}"],
   "projects": {

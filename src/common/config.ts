@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { dataDir, normRoot } from "./paths.js";
+import type { RestrictionsConfig } from "./restrictions.js";
 
 export type ScopeCheck = "off" | "warn" | "fail";
 
@@ -39,6 +40,8 @@ export interface OrchestratorConfig {
     redact_secrets?: boolean;
     /** per-repo spending limit; each field overrides the global budget */
     budget?: BudgetConfig;
+    /** what worker sessions on this repo may not touch; lists add to the global ones, switches override them */
+    restrictions?: RestrictionsConfig;
     /** platform for the independent code review of this repo's tasks; default: any configured platform other than the one that wrote the code */
     review_platform?: string;
     /** Workspace mode: project_root itself is NOT a git repo; these child directories (relative to project_root, or absolute) are. Branches, coding dispatches and tests run per child repo. */
@@ -55,6 +58,8 @@ export interface OrchestratorConfig {
   redact_extra?: string[];
   /** spending limit per task; a repo's own budget overrides it field by field */
   budget?: BudgetConfig;
+  /** secret files, commands and sandbox for worker sessions (on by default with a short built-in list) */
+  restrictions?: RestrictionsConfig;
   /** global default for projects.<root>.review_platform */
   review_platform?: string;
   /** a folder the team shares (usually a git clone): policy.json and learnings/ live there instead of the private data folder. Tasks, documents and dispatches stay local. */

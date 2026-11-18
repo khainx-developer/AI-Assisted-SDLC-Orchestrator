@@ -4,9 +4,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, extname, dirname, relative } from "node:path";
 import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
-import { loadConfig, projectConfig, repoSettings } from "../common/config.js";
+import { loadConfig, projectConfig, repoSettings, redactSettings } from "../common/config.js";
 import { budgetStatus } from "../common/budget.js";
-import { redactForRepo } from "../common/redact.js";
+import { redactForRepo, scanFilesForSecrets } from "../common/redact.js";
+import { restrictionsFor } from "../common/restrictions.js";
 import { dispatchUsage } from "../common/usage.js";
 import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
@@ -131,8 +132,9 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const promptArg = via === "file" ? `Read the file ${promptFile} and follow the instructions in it exactly.` : a.req.prompt;
 
   const writes = a.kind !== "analysis";
-  const req = promptAccessRequest({ ...a.req, mode: writes ? "coding" : "analysis", promptFile }, platform, via);
+  const req = promptAccessRequest({ ...a.req, mode: writes ? "coding" : "analysis", promptFile, restrictions: restrictionsFor(a.req.projectRoot) }, platform, via);
   const inv = platform.build(req, override, promptArg);
+  for (const f of inv.files ?? []) writeFileSync(f.path, f.content);
   const root = a.req.projectRoot;
   const repos = a.repos ?? [root];
   const before = a.kind === "analysis" ? await porcelainAll(root, repos) : [];
@@ -148,6 +150,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     prompt_chars: a.req.prompt.length, model: a.req.model ?? override.model,
   };
   if (redaction && Object.keys(redaction.counts).length) meta.redacted = redaction.counts;
+  if (inv.restrictions && (inv.restrictions.applied.length || inv.restrictions.not_enforced.length)) meta.restrictions = inv.restrictions;
   if (frozenSnapshot) { meta.frozen_files = a.frozenFiles; meta.frozen_backup = join(dispatchDir(id), "frozen"); }
   const child = spawn(exe, inv.args, { cwd: a.req.projectRoot, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   meta.pid = child.pid;
@@ -177,6 +180,8 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
     meta.exit_code = code;
     meta.output = text;
+    const leaked = redactForRepo(root, text);
+    if (leaked && Object.keys(leaked.counts).length) meta.secrets_in_output = leaked.counts;
     meta.usage = dispatchUsage(platform.parseUsage?.(out) ?? null, a.req.prompt.length, text.length);
     const over = budgetStatus(a.task_id, root, meta.usage);
     if (over?.exceeded) meta.budget_warning = over.message;
@@ -192,6 +197,11 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
       const touched = touchedSince(root, hashesBefore, after);
       meta.files_changed = after;
       meta.files_touched = touched;
+      const rs = redactSettings(root);
+      if (rs.redact_secrets) {
+        const scan = scanFilesForSecrets(root, touched, rs.redact_extra);
+        if (Object.keys(scan.found).length) meta.secrets_in_files = scan.found;
+      }
       const r = parseCodingResult(text);
       if (r) {
         Object.assign(meta, { success: r.success, summary: r.summary, needs_clarification: r.needs_clarification, question: r.question, pr_number: r.pr_number });
