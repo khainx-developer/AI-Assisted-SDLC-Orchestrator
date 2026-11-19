@@ -13,6 +13,19 @@ import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
 import { prepareCheckout } from "./checkout.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
+import {
+  applyRemoteKnowledgeDocument,
+  configureKnowledgeSync,
+  getKnowledgeSyncState,
+  listKnowledgeDocuments,
+  reconcileKnowledgeDocument,
+  readKnowledgeDocument,
+  readKnowledgeDocumentForSync,
+  readKnowledgeSyncBaseline,
+  readProjectSourceFiles,
+  recordKnowledgeSyncBaseline,
+  writeKnowledgeDocument,
+} from "../knowledge/storage.js";
 
 const server = new McpServer({ name: "dispatch", version: "0.1.0" });
 
@@ -51,8 +64,132 @@ server.tool(
 );
 
 server.tool(
+  "list_knowledge_documents",
+  "List saved Markdown knowledge documents for one project. This reads only the separate knowledge store, never the project repository.",
+  { project_root: z.string().min(1) },
+  (a) => run(() => listKnowledgeDocuments(a.project_root))
+);
+
+server.tool(
+  "read_knowledge_document",
+  "Read one Markdown document from the project's separate knowledge store. Rejects absolute paths, traversal, and symlinks.",
+  { project_root: z.string().min(1), relative_path: z.string().min(1) },
+  (a) => run(() => readKnowledgeDocument(a.project_root, a.relative_path))
+);
+
+server.tool(
+  "read_knowledge_document_for_sync",
+  "Read one Markdown knowledge document for an external Confluence sync. Refuses the document if secret-looking content is detected; review and remove it before syncing.",
+  { project_root: z.string().min(1), relative_path: z.string().min(1) },
+  (a) => run(() => readKnowledgeDocumentForSync(a.project_root, a.relative_path))
+);
+
+server.tool(
+  "write_knowledge_document",
+  "Create or explicitly overwrite one Markdown document in the project's separate knowledge store. Overwriting is disabled by default; only set overwrite=true after the user approves replacement.",
+  { project_root: z.string().min(1), relative_path: z.string().min(1), content: z.string(), overwrite: z.boolean().default(false) },
+  (a) => run(() => writeKnowledgeDocument(a.project_root, a.relative_path, a.content, a.overwrite))
+);
+
+server.tool(
+  "configure_knowledge_sync",
+  "Save the user's Confluence site, space key and parent content ID for this project's document sync. This stores identifiers only and makes no remote request or write.",
+  {
+    project_root: z.string().min(1),
+    cloud_id: z.string().trim().min(1),
+    space_key: z.string().trim().min(1),
+    parent_content_id: z.string().trim().min(1),
+  },
+  (a) => run(() => configureKnowledgeSync(a.project_root, {
+    cloudId: a.cloud_id,
+    spaceKey: a.space_key,
+    parentContentId: a.parent_content_id,
+  }))
+);
+
+server.tool(
+  "get_knowledge_sync_state",
+  "Read the local Confluence page mappings and last-synced hashes for a project. Baseline document content is not included; use read_knowledge_sync_baseline for one mapped document.",
+  { project_root: z.string().min(1) },
+  (a) => run(() => getKnowledgeSyncState(a.project_root))
+);
+
+server.tool(
+  "read_knowledge_sync_baseline",
+  "Read the last-synced Markdown baseline for one mapped knowledge document. Use it to compare local and Confluence edits before a bidirectional sync.",
+  { project_root: z.string().min(1), relative_path: z.string().min(1) },
+  (a) => run(() => readKnowledgeSyncBaseline(a.project_root, a.relative_path))
+);
+
+server.tool(
+  "reconcile_knowledge_document",
+  "Compare one mapped local Markdown file and supplied current Confluence Markdown with their last-synced baseline. Returns a deterministic action; it never writes either side.",
+  { project_root: z.string().min(1), relative_path: z.string().min(1), remote_content: z.string() },
+  (a) => run(() => reconcileKnowledgeDocument(a.project_root, a.relative_path, a.remote_content))
+);
+
+server.tool(
+  "record_knowledge_sync_baseline",
+  "Record a successful Confluence create, update or user-approved page adoption as a local baseline. Requires confirmed=true after the user approved this sync, and the destination must match the configured one.",
+  {
+    project_root: z.string().min(1),
+    relative_path: z.string().min(1),
+    page_id: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    content: z.string(),
+    remote_version: z.number().int().min(1).optional(),
+    cloud_id: z.string().trim().min(1),
+    space_key: z.string().trim().min(1),
+    parent_content_id: z.string().trim().min(1),
+    confirmed: z.boolean(),
+  },
+  (a) => run(() => recordKnowledgeSyncBaseline(a.project_root, {
+    relativePath: a.relative_path,
+    pageId: a.page_id,
+    title: a.title,
+    content: a.content,
+    remoteVersion: a.remote_version,
+    cloudId: a.cloud_id,
+    spaceKey: a.space_key,
+    parentContentId: a.parent_content_id,
+    confirmed: a.confirmed,
+  }))
+);
+
+server.tool(
+  "apply_remote_knowledge_document",
+  "Apply a user-approved Confluence edit to its already-mapped local Markdown document. Requires the local content hash read during reconciliation and confirmed=true; refuses if the local file changed in the meantime, then updates its sync baseline.",
+  {
+    project_root: z.string().min(1),
+    relative_path: z.string().min(1),
+    page_id: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    content: z.string(),
+    expected_local_hash: z.string().regex(/^[0-9a-f]{64}$/i),
+    remote_version: z.number().int().min(1).optional(),
+    confirmed: z.boolean(),
+  },
+  (a) => run(() => applyRemoteKnowledgeDocument(a.project_root, {
+    relativePath: a.relative_path,
+    pageId: a.page_id,
+    title: a.title,
+    content: a.content,
+    expectedLocalHash: a.expected_local_hash,
+    remoteVersion: a.remote_version,
+    confirmed: a.confirmed,
+  }))
+);
+
+server.tool(
+  "read_project_source_files",
+  "Read only the exact relative source-file paths explicitly supplied by the user. No directory listing, globbing, recursive traversal, or repository scan is performed. Secret-like files are denied, content is size-capped and redacted, and returned lines are numbered.",
+  { project_root: z.string().min(1), relative_paths: z.array(z.string().min(1)).min(1).max(12) },
+  (a) => run(() => readProjectSourceFiles(a.project_root, a.relative_paths))
+);
+
+server.tool(
   "dispatch_analysis_task",
-  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation; for the repo knowledge pipeline: repo-survey, module-analysis, domain-rules, conventions, decision-mining, which read the scan under additional_read_roots). Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage document; store it with record_stage_artifact(dispatch_id=...) rather than copying the text (skill_version and platform are recorded from the dispatch).",
+  "Start a READ-ONLY session on the chosen AI platform running a stage skill (requirement-analysis, task-breakdown, design-analysis, plan-creation). Knowledge-document drafting is chat-led and uses only user-provided context or exact source files the user names; do not dispatch a repository survey. Returns a dispatch_id immediately; poll get_dispatch_result. The result's `artifact` field is the clean stage document; store it with record_stage_artifact(dispatch_id=...) rather than copying the text (skill_version and platform are recorded from the dispatch).",
   {
     task_id: z.string(), project_root: z.string(), stage: z.string(), skill: z.string(), instructions: z.string(),
     additional_read_roots: z.array(z.string()).optional(), platform: platformArg, override_budget: overrideBudgetArg, model: z.string().optional().describe("one-off override of projects.<root>.model and platforms.<id>.model"),

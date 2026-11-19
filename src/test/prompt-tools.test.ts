@@ -11,7 +11,7 @@ for (const f of ["src/workflow-state/server.ts", "src/dispatch/server.ts"]) {
   for (const m of src.matchAll(/server\.tool\(\s*"([a-z_]+)"/g)) registered.add(m[1]);
 }
 
-const TOOL_LIKE = /`((?:create|get|list|record|set|dispatch|run|mark|write|read|remove|search|update|approve|answer|cancel|check|delete|find|report|transition)_[a-z_]+)(?:\(|`)/g;
+const TOOL_LIKE = /`((?:create|get|list|record|set|start|dispatch|run|mark|write|read|remove|search|update|approve|answer|cancel|check|delete|find|report|transition)_[a-z_]+)(?:\(|`)/g;
 // words with a tool-like prefix that are fields or flags, not tools
 const NOT_TOOLS = new Set(["dispatch_id", "dispatch_status", "dispatch_timeout_minutes", "read_only_violation"]);
 
@@ -29,4 +29,13 @@ test("SYSTEM_PROMPT.md and every skill name only tools that exist", () => {
   const skills = join(root, "orchestrator-agent", "skills");
   for (const d of readdirSync(skills)) files.push(join(skills, d, "SKILL.md"));
   for (const f of files) for (const n of named(f)) assert.ok(registered.has(n), `${f} names tool '${n}', which no server registers`);
+});
+
+test("project knowledge is chat-led and limited to exact user-selected source files", () => {
+  const prompt = readFileSync(join(root, "orchestrator-agent", "SYSTEM_PROMPT.md"), "utf8");
+  const section = prompt.split("## Project knowledge (chat-led, user-scoped)")[1]?.split("\n## ")[0] ?? "";
+  assert.match(section, /Never scan, survey, crawl, recursively list, glob, or search the target repository/);
+  assert.match(section, /Only call `read_project_source_files` for exact relative file paths the user has named/);
+  assert.match(section, /After approval, use `write_knowledge_document`/);
+  assert.doesNotMatch(section, /`(?:start_knowledge_run|get_knowledge_run)`/);
 });

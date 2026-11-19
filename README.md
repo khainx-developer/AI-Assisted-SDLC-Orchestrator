@@ -84,8 +84,9 @@ Practices the community commonly expects when AI does software delivery, and whe
 | Restricted workers | Secret files and risky commands are denied to worker sessions through each CLI's own rules, plus an optional OS sandbox; each dispatch records what was and was not enforced; see [Restrictions](#restricting-what-workers-can-touch) |
 | Team sharing | `shared_dir` in `config.json` moves `policy.json` and `learnings/` into a folder the team keeps in git; tasks and documents stay private. Sync is plain git; see [learnings.md](docs/learnings.md) |
 | Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch). A per-task budget can warn or block further dispatches |
+| Project knowledge | The agent co-writes Markdown docs from your instructions and selected source files, then can sync approved knowledge docs bidirectionally with Confluence. No repo-wide scan; conflicts are preserved for your decision and deletions are never propagated automatically. See [knowledge-pipeline.md](docs/knowledge-pipeline.md) |
 
-**Roadmap:** nothing planned. New gaps get listed here as they are found.
+**Roadmap:** knowledge synthesis and freshness tracking remain in [BACKLOG.md](BACKLOG.md).
 
 ## Documentation
 
@@ -95,6 +96,7 @@ Practices the community commonly expects when AI does software delivery, and whe
 | [docs/workflow.md](docs/workflow.md) | What happens to a story, step by step, and who does what |
 | [docs/architecture.md](docs/architecture.md) | Components, data, how a dispatch works, what the server checks, design decisions and open questions |
 | [docs/mcp-servers.md](docs/mcp-servers.md) | Every MCP server and tool |
+| [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md) | Repository knowledge generation, review and roadmap |
 | [docs/learnings.md](docs/learnings.md) | How durable team notes are stored and used |
 | [clients/README.md](clients/README.md) | Registering the servers by hand (including Claude Desktop) |
 
@@ -108,7 +110,7 @@ Agent behaviour lives in [orchestrator-agent/SYSTEM_PROMPT.md](orchestrator-agen
 | Git | Coding sessions work on a `story/<id>` branch |
 | A chat tool with MCP support: Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
 | The CLI of the AI that does the dispatched work, installed **and signed in** | Copilot: `npm install -g @github/copilot`, then run `copilot` once. Claude: `claude`. Cursor: `cursor-agent` |
-| Optional: Atlassian (Jira) and GitHub MCP access | Lets the agent read tickets and find PRs. You sign in when your tool prompts |
+| Optional: Atlassian (Jira/Confluence) and GitHub MCP access | Lets the agent read tickets, sync knowledge to Confluence, and find PRs. You sign in when your tool prompts |
 
 ## Install (about 5 minutes)
 
@@ -209,9 +211,8 @@ node dist/cli.js dispatches prune                         # preview; add --yes t
 # what the AI sessions used
 node dist/cli.js dispatches usage                         # all finished dispatches; --task <task_id> for one story, --days N for recent ones
 
-# repo knowledge pipeline, stage 0 (proposal in docs/knowledge-pipeline.md; no AI, nothing is written into the repo)
-node dist/cli.js knowledge scan --repo D:/work/ProjectA [--since "12 months ago"] [--out <file>] [--exclude <regex>]
-node dist/cli.js knowledge run --repo D:/work/ProjectA [--modules M1,M2|all] [--max-repairs 2] [--max-sessions 40] [--verifier <platform>] [--reuse-survey]   # survey, then per module: write, check, verify, repair (AI sessions cost tokens; see docs/knowledge-pipeline.md)
+# project knowledge: ask the agent to draft from your instructions and exact source files, then sync approved docs to Confluence
+# no project scan or worker dispatch; local knowledge stays outside the source repo
 
 # skill evals
 node dist/cli.js evals check                              # free and offline: the golden documents must pass their checks
@@ -229,6 +230,8 @@ Install writes, per target (copilot-cli / cursor never modify the repo; `--repo`
 | `cursor` | `~/.cursor/agents/orchestrator-agent.md` (`@orchestrator-agent`); `--repo` sets `platform: cursor` | `~/.cursor/mcp.json` |
 
 Existing MCP config files are merged, backed up as `.bak`, and comments inside them are not preserved. `copilot-cli` is the supported Copilot installer target; `copilot` remains the dispatch platform identifier for Copilot CLI worker sessions.
+
+When installing `copilot-cli` with `--repo`, that folder is added to Copilot CLI's `trustedFolders` in `~/.copilot/config.json`; a Copilot worker also adds its exact project root before launch. This lets Copilot CLI load that folder's `.mcp.json`. Review workspace MCP server definitions before trusting a project; existing Copilot settings are preserved and backed up as `.bak`.
 
 ## Configuration
 

@@ -9,6 +9,7 @@ import { budgetStatus } from "../common/budget.js";
 import { redactForRepo, scanFilesForSecrets } from "../common/redact.js";
 import { restrictionsFor } from "../common/restrictions.js";
 import { dispatchUsage } from "../common/usage.js";
+import { trustCopilotFolder } from "../common/copilot-trust.js";
 import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 import { porcelainPath, pathAllowed, outsideScope, hashFiles, touchedSince, snapshotFrozen, frozenViolations, classifyTestRun } from "./guards.js";
@@ -118,6 +119,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const redaction = redactForRepo(a.req.projectRoot, a.req.prompt);
   if (redaction) a = { ...a, req: { ...a.req, prompt: redaction.text } };
   const { platform, override } = resolvePlatform(a.platformId, cfg.platforms);
+  if (platform.id === "copilot") trustCopilotFolder(a.req.projectRoot);
   const id = `d_${randomUUID().slice(0, 8)}`;
   mkdirSync(dispatchDir(id), { recursive: true });
   const promptFile = join(dispatchDir(id), "prompt.md");
