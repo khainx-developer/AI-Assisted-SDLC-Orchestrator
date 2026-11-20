@@ -53,11 +53,26 @@ test("repo instruction files are gathered and size-capped; none gives null", () 
   mkdirSync(join(repo, ".github", "skills", "s1"), { recursive: true });
   assert.equal(repoInstructionsText(repo), null);
   writeFileSync(join(repo, "CLAUDE.md"), "no ORM here");
-  writeFileSync(join(repo, ".github", "agents", "dev.agent.md"), "deprecated: LegacyBilling");
-  writeFileSync(join(repo, ".github", "skills", "s1", "SKILL.md"), "flaky: CheckoutTests");
+  writeFileSync(join(repo, ".github", "agents", "dev.agent.md"), ["# Dev", "", "Development agent.", "", "deprecated: LegacyBilling"].join("\n"));
+  writeFileSync(join(repo, ".github", "skills", "s1", "SKILL.md"), ["---", "name: s1", "---", "- Use when:", "- Checking out.", "", "flaky: CheckoutTests"].join("\n"));
   const t = repoInstructionsText(repo)!;
-  for (const s of ["--- CLAUDE.md ---", ".github/agents/dev.agent.md", ".github/skills/s1/SKILL.md", "LegacyBilling"]) assert.ok(t.includes(s), s);
+  for (const s of ["--- CLAUDE.md ---", "no ORM here", ".github/agents/dev.agent.md", ".github/skills/s1/SKILL.md"]) assert.ok(t.includes(s), s);
+  assert.ok(!t.includes("LegacyBilling") && !t.includes("CheckoutTests"), "agent and skill files are listed, not included in full");
   assert.ok(repoInstructionsText(repo, 600)!.length < 1200);
+  // what the platform's CLI reads by itself is not repeated
+  assert.ok(!repoInstructionsText(repo, undefined, [repo], "claude")!.includes("no ORM here"));
+  assert.ok(repoInstructionsText(repo, undefined, [repo], "copilot")!.includes("no ORM here"));
+});
+
+test("agent and skill files are indexed with their description", () => {
+  const repo = join(dir, "repo-idx");
+  mkdirSync(join(repo, ".github", "skills", "sql"), { recursive: true });
+  writeFileSync(join(repo, ".github", "skills", "sql", "SKILL.md"), ["---", "name: sql", "description: Write DbScripts migrations", "---", "# SQL", "x".repeat(5000)].join("\n"));
+  writeFileSync(join(repo, ".github", "copilot-instructions.md"), "general rules");
+  const t = repoInstructionsText(repo, undefined, [repo], "copilot")!;
+  assert.match(t, /\.github\/skills\/sql\/SKILL\.md: Write DbScripts migrations/);
+  assert.ok(t.length < 600, "a big skill file adds one line, not its body");
+  assert.ok(!t.includes("general rules"), "copilot reads copilot-instructions.md itself");
 });
 
 test("analysis prompt carries repo instructions as context only; coding prompt carries learnings but not repo files", () => {

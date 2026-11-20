@@ -70,7 +70,7 @@ Practices the community commonly expects when AI does software delivery, and whe
 | Area | What you get |
 |---|---|
 | Context | Fresh one-shot worker sessions, a small orchestrator, hand-off through Markdown documents |
-| Memory | Learnings, injected repo instruction files, full-text search over past decisions |
+| Memory | Learnings, repo instruction files (capped; files the AI CLI reads itself are not repeated, agents and skills are indexed), full-text search over past decisions |
 | Control | Approval gates, read-only analysis (enforced twice), a branch per task, never `main` |
 | Checks done by code | Scope check, frozen tests, double-dispatch guard, tests with capped retries |
 | Process | Triage by risk, requirement → design → plan, big-story split, wrong-spec return |

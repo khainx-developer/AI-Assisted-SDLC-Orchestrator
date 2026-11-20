@@ -78,7 +78,7 @@ sequenceDiagram
     participant S as workflow-state
 
     O->>D: dispatch_analysis_task(skill, instructions)
-    D->>D: build prompt = skill + learnings + repo instruction files + instructions
+    D->>D: build prompt = skill + learnings + repo instruction files (not the ones the platform's CLI loads itself; agents and skills as an index, capped at repo_instructions_max_chars, default 12000) + instructions
     D->>W: start CLI with the prompt (stdin, argument or file)
     D-->>O: dispatch_id (returns immediately)
     W->>R: reads files (read-only)

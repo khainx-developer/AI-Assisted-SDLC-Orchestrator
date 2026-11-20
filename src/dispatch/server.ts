@@ -11,6 +11,7 @@ import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
+import { repoInstructionsMax } from "../common/config.js";
 import { addProject, removeProject, updateSetting, describeConfig } from "../common/config-edit.js";
 import { prepareWorkDir, existingWorktree, removeWorktree } from "./checkout.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
@@ -224,9 +225,10 @@ server.tool(
     const skill = loadSkill(a.skill, cfg.skills_dir ?? bundledSkillsDir);
     const roots = a.additional_read_roots ?? [];
     const repos = projectRepos(a.project_root); // a workspace's analysis runs at its root and may read every child
+    const platformId = pickPlatform("analysis", a.project_root, a.platform ?? undefined);
     const m = await startAgentDispatch({
-      kind: "analysis", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("analysis", a.project_root, a.platform ?? undefined), skill_version: skill.version, repos,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, undefined, repos) }) },
+      kind: "analysis", overrideBudget: a.override_budget, task_id: a.task_id, platformId, skill_version: skill.version, repos,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, platformId) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status };
   })
@@ -254,7 +256,7 @@ server.tool(
     const model = a.model ?? (choice.platform === choice.coded_by?.platform ? projectConfig(a.project_root)?.model : undefined);
     const m = await startAgentDispatch({
       kind: "analysis", overrideBudget: a.override_budget, task_id: a.task_id, platformId: choice.platform, skill_version: skill.version, repos,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model, prompt: analysisPrompt({ skill: "code-review", skillBody: skill.body, instructions: reviewInstructions({ context: a.context, branch: a.branch, diff }), projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, undefined, repos) }) },
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model, prompt: analysisPrompt({ skill: "code-review", skillBody: skill.body, instructions: reviewInstructions({ context: a.context, branch: a.branch, diff }), projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, choice.platform) }) },
     });
     return {
       dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status,

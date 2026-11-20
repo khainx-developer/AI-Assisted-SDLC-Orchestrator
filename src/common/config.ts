@@ -42,6 +42,8 @@ export interface OrchestratorConfig {
     budget?: BudgetConfig;
     /** what worker sessions on this repo may not touch; lists add to the global ones, switches override them */
     restrictions?: RestrictionsConfig;
+    /** cap on characters injected from the repo's own instruction files into analysis prompts (default 12000) */
+    repo_instructions_max_chars?: number;
     /** give each task its own git worktree so stories can code in parallel (default false: all tasks share the repo checkout). Not for workspaces with child_repos. */
     worktree?: boolean;
     /** shell command run once in a new worktree, e.g. "npm ci" (ignored files such as node_modules are not part of a worktree) */
@@ -56,6 +58,8 @@ export interface OrchestratorConfig {
   tests_first?: boolean;
   scope_check?: ScopeCheck;
   scope_allow?: string[];
+  /** global default for projects.<root>.repo_instructions_max_chars */
+  repo_instructions_max_chars?: number;
   /** global default for projects.<root>.redact_secrets (default true) */
   redact_secrets?: boolean;
   /** extra regex sources for team-specific token formats, removed from prompts like the built-in patterns */
@@ -139,6 +143,12 @@ export function repoSettings(root: string): { tests_first: boolean; scope_check:
     scope_allow: [...(cfg.scope_allow ?? []), ...(p?.scope_allow ?? [])],
     test_command: p?.test_command ?? null,
   };
+}
+
+/** Cap on characters of repo instruction files injected into an analysis prompt; the repo's value wins over the global one. */
+export function repoInstructionsMax(root: string, fallback = 12_000): number {
+  const v = projectConfig(root)?.repo_instructions_max_chars ?? loadConfig().repo_instructions_max_chars;
+  return typeof v === "number" && v >= 0 ? v : fallback;
 }
 
 /** Worktree switches for a repo. Off unless the repo's entry turns it on. */
