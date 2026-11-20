@@ -11,7 +11,7 @@ import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
-import { prepareCheckout } from "./checkout.js";
+import { prepareWorkDir, existingWorktree, removeWorktree } from "./checkout.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
 import {
   applyRemoteKnowledgeDocument,
@@ -259,13 +259,13 @@ server.tool(
   (a) => run(async () => {
     if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch work onto main/master");
     requireGitRepo(a.project_root);
-    await prepareCheckout(a.project_root, a.branch, a.task_id, a.base_branch);
+    const workDir = await prepareWorkDir(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
-      kind: "test-authoring", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, testPaths: a.test_paths,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root) }) },
+      workDir: workDir === a.project_root ? undefined : workDir, kind: "test-authoring", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, testPaths: a.test_paths,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root) }) },
     });
-    return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status };
+    return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, worktree: m.worktree };
   })
 );
 
@@ -284,13 +284,13 @@ server.tool(
     if (/^(main|master)$/.test(a.branch)) throw new Error("refusing to dispatch coding work onto main/master");
     requireGitRepo(a.project_root);
     const frozenFiles = a.frozen_from_dispatch ? frozenFilesFrom(a.task_id, a.frozen_from_dispatch) : undefined;
-    await prepareCheckout(a.project_root, a.branch, a.task_id, a.base_branch);
+    const workDir = await prepareWorkDir(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
     const m = await startAgentDispatch({
-      kind: "coding", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, targetFiles: a.target_files, frozenFiles,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: a.project_root, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root) }) },
+      workDir: workDir === a.project_root ? undefined : workDir, kind: "coding", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, targetFiles: a.target_files, frozenFiles,
+      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root) }) },
     });
-    return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, frozen_files: frozenFiles ?? [] };
+    return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, worktree: m.worktree, frozen_files: frozenFiles ?? [] };
   })
 );
 
@@ -301,7 +301,7 @@ server.tool(
     requireGitRepo(a.project_root);
     const cmd = detectTestCommand(a.project_root);
     if (!cmd) throw new Error(`no test command detected for ${a.project_root}; set projects."<root>".test_command in config.json`);
-    const m = startTestDispatch(a.task_id, a.project_root, cmd, a.expect_fail ?? false);
+    const m = startTestDispatch(a.task_id, a.project_root, cmd, a.expect_fail ?? false, existingWorktree(a.project_root, a.task_id));
     return { dispatch_id: m.dispatch_id, command: cmd, status: m.status };
   })
 );
@@ -322,6 +322,12 @@ server.tool(
   "cancel_dispatch", "Stop an in-flight dispatch (kills the AI CLI and its child processes) and record it as failed with the given reason, so the stage can be retried. Use when a dispatch looks stalled and the human chose to cancel; never cancel on your own.",
   { dispatch_id: z.string(), reason: z.string().optional() },
   (a) => run(() => cancelDispatch(a.dispatch_id, a.reason))
+);
+
+server.tool(
+  "remove_worktree", "Delete a task's git worktree (only exists when projects.<root>.worktree is true). The branch and its commits stay. Refuses while a session runs in it or when it has uncommitted work; pass force=true only if the human agreed to discard that work. Offer it once the task is merged or abandoned; do not call it unprompted.",
+  { task_id: z.string(), project_root: z.string(), force: z.boolean().optional() },
+  (a) => run(() => removeWorktree(a.project_root, a.task_id, a.force ?? false))
 );
 
 server.tool(

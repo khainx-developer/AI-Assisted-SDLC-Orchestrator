@@ -42,6 +42,10 @@ export interface OrchestratorConfig {
     budget?: BudgetConfig;
     /** what worker sessions on this repo may not touch; lists add to the global ones, switches override them */
     restrictions?: RestrictionsConfig;
+    /** give each task its own git worktree so stories can code in parallel (default false: all tasks share the repo checkout). Not for workspaces with child_repos. */
+    worktree?: boolean;
+    /** shell command run once in a new worktree, e.g. "npm ci" (ignored files such as node_modules are not part of a worktree) */
+    worktree_setup?: string;
     /** platform for the independent code review of this repo's tasks; default: any configured platform other than the one that wrote the code */
     review_platform?: string;
     /** Workspace mode: project_root itself is NOT a git repo; these child directories (relative to project_root, or absolute) are. Branches, coding dispatches and tests run per child repo. */
@@ -135,6 +139,12 @@ export function repoSettings(root: string): { tests_first: boolean; scope_check:
     scope_allow: [...(cfg.scope_allow ?? []), ...(p?.scope_allow ?? [])],
     test_command: p?.test_command ?? null,
   };
+}
+
+/** Worktree switches for a repo. Off unless the repo's entry turns it on. */
+export function worktreeSettings(root: string): { enabled: boolean; setup: string | null } {
+  const p = projectConfig(root);
+  return { enabled: p?.worktree === true, setup: p?.worktree_setup ?? null };
 }
 
 /** Secret redaction switches for prompts sent to the AI CLI. On unless switched off for the repo or globally. */

@@ -35,6 +35,8 @@ export interface DispatchMeta {
   duration_ms?: number;
   skill_version?: string;
   branch?: string;
+  /** the task's worktree the session ran in (absent when the repo checkout itself was used) */
+  worktree?: string;
   // outcome
   output?: string;
   /** analysis only: the cleaned stage artifact (use this, not output) */

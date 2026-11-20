@@ -20,7 +20,7 @@ From the workflow review of 2026-11-18, most valuable first. Research sources we
 
 ## Parked
 
-- **Worktree per task** for running stories in parallel. Built and tested once, then removed on 2026-11-18: the target repo is about 20 GB, so each story would need a full extra working copy. Revisit with a sparse option (`worktree_sparse`: create the worktree without a checkout, then check out only the listed folders) or if a smaller repo needs parallel stories. Notes from the design: one worktree per task and repo (not per dispatch, so retries see earlier changes), config looked up by the repo and files judged in the worktree, `remove_worktree` that refuses on uncommitted work, `worktree_setup` for ignored files such as `node_modules`.
+- **Sparse worktrees.** Worktree per task is built again (`projects.<root>.worktree`, default off). A 20 GB repo still needs a full extra copy per story; add `worktree_sparse` (create the worktree without a checkout, then check out only the listed folders).
 
 ## Done recently
 

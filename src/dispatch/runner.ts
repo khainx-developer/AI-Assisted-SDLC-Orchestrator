@@ -105,6 +105,8 @@ interface StartArgs {
   frozenFiles?: string[];
   /** test-authoring: where the tests belong; the touched files inside become the frozen set, any others are scope violations */
   testPaths?: string[];
+  /** write sessions: run in this directory (the task's worktree) instead of req.projectRoot. Config is still looked up by req.projectRoot. */
+  workDir?: string;
   /** go ahead although the task is over its budget (the human said so) */
   overrideBudget?: boolean;
 }
@@ -119,7 +121,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   const redaction = redactForRepo(a.req.projectRoot, a.req.prompt);
   if (redaction) a = { ...a, req: { ...a.req, prompt: redaction.text } };
   const { platform, override } = resolvePlatform(a.platformId, cfg.platforms);
-  if (platform.id === "copilot") trustCopilotFolder(a.req.projectRoot);
+  if (platform.id === "copilot") { trustCopilotFolder(a.req.projectRoot); if (a.workDir) trustCopilotFolder(a.workDir); }
   const id = `d_${randomUUID().slice(0, 8)}`;
   mkdirSync(dispatchDir(id), { recursive: true });
   const promptFile = join(dispatchDir(id), "prompt.md");
@@ -133,28 +135,29 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
   if (via === "arg" && a.req.prompt.length > 8000) via = "file";
   const promptArg = via === "file" ? `Read the file ${promptFile} and follow the instructions in it exactly.` : a.req.prompt;
 
+  const cfgRoot = a.req.projectRoot; // identifies the repo in config.json, budgets and dispatch records
+  const root = a.workDir ?? cfgRoot;  // where the session runs and where its changes are judged
   const writes = a.kind !== "analysis";
-  const req = promptAccessRequest({ ...a.req, mode: writes ? "coding" : "analysis", promptFile, restrictions: restrictionsFor(a.req.projectRoot) }, platform, via);
+  const req = promptAccessRequest({ ...a.req, projectRoot: a.workDir ?? a.req.projectRoot, mode: writes ? "coding" : "analysis", promptFile, restrictions: restrictionsFor(cfgRoot) }, platform, via);
   const inv = platform.build(req, override, promptArg);
   for (const f of inv.files ?? []) writeFileSync(f.path, f.content);
-  const root = a.req.projectRoot;
   const repos = a.repos ?? [root];
   const before = a.kind === "analysis" ? await porcelainAll(root, repos) : [];
   // write sessions: remember what was already dirty (earlier attempts, frozen tests) so only THIS session's changes are judged
   const dirtyBefore = writes ? await changedFiles(root) : [];
   const hashesBefore = writes ? hashFiles(root, dirtyBefore) : {};
-  const settings = repoSettings(root);
+  const settings = repoSettings(cfgRoot);
   const frozenSnapshot = a.frozenFiles?.length ? snapshotFrozen(root, a.frozenFiles, join(dispatchDir(id), "frozen")) : null;
 
   const meta: DispatchMeta = {
-    dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: root,
+    dispatch_id: id, kind: a.kind, task_id: a.task_id, platform: platform.id, project_root: cfgRoot,
     status: "in-flight", started_at: new Date().toISOString(), skill_version: a.skill_version, branch: a.branch,
-    prompt_chars: a.req.prompt.length, model: a.req.model ?? override.model,
+    worktree: a.workDir, prompt_chars: a.req.prompt.length, model: a.req.model ?? override.model,
   };
   if (redaction && Object.keys(redaction.counts).length) meta.redacted = redaction.counts;
   if (inv.restrictions && (inv.restrictions.applied.length || inv.restrictions.not_enforced.length)) meta.restrictions = inv.restrictions;
   if (frozenSnapshot) { meta.frozen_files = a.frozenFiles; meta.frozen_backup = join(dispatchDir(id), "frozen"); }
-  const child = spawn(exe, inv.args, { cwd: a.req.projectRoot, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(exe, inv.args, { cwd: root, shell: isShim, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   meta.pid = child.pid;
   save(meta);
 
@@ -182,10 +185,10 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
     meta.duration_ms = Date.parse(meta.finished_at) - Date.parse(meta.started_at);
     meta.exit_code = code;
     meta.output = text;
-    const leaked = redactForRepo(root, text);
+    const leaked = redactForRepo(cfgRoot, text);
     if (leaked && Object.keys(leaked.counts).length) meta.secrets_in_output = leaked.counts;
     meta.usage = dispatchUsage(platform.parseUsage?.(out) ?? null, a.req.prompt.length, text.length);
-    const over = budgetStatus(a.task_id, root, meta.usage);
+    const over = budgetStatus(a.task_id, cfgRoot, meta.usage);
     if (over?.exceeded) meta.budget_warning = over.message;
     meta.stderr_tail = err.slice(-2000);
     if (spawnErr) meta.error = `could not start '${exe}': ${spawnErr.message}`;
@@ -199,7 +202,7 @@ export async function startAgentDispatch(a: StartArgs): Promise<DispatchMeta> {
       const touched = touchedSince(root, hashesBefore, after);
       meta.files_changed = after;
       meta.files_touched = touched;
-      const rs = redactSettings(root);
+      const rs = redactSettings(cfgRoot);
       if (rs.redact_secrets) {
         const scan = scanFilesForSecrets(root, touched, rs.redact_extra);
         if (Object.keys(scan.found).length) meta.secrets_in_files = scan.found;
@@ -251,11 +254,11 @@ function readdirHas(dir: string, re: RegExp) {
   try { return readdirSync(dir).some((f: string) => re.test(f)); } catch { return false; }
 }
 
-export function startTestDispatch(task_id: string, root: string, command: string, expectFail = false): DispatchMeta {
+export function startTestDispatch(task_id: string, root: string, command: string, expectFail = false, workDir?: string): DispatchMeta {
   const id = `d_${randomUUID().slice(0, 8)}`;
   mkdirSync(dispatchDir(id), { recursive: true });
-  const meta: DispatchMeta = { dispatch_id: id, kind: "test", task_id, platform: "shell", project_root: root, status: "in-flight", started_at: new Date().toISOString() };
-  const child = spawn(command, { cwd: root, shell: true, windowsHide: true });
+  const meta: DispatchMeta = { dispatch_id: id, kind: "test", task_id, platform: "shell", project_root: root, status: "in-flight", started_at: new Date().toISOString(), worktree: workDir };
+  const child = spawn(command, { cwd: workDir ?? root, shell: true, windowsHide: true });
   meta.pid = child.pid;
   save(meta);
   let out = "";
