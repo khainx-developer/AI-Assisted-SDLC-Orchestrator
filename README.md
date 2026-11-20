@@ -84,7 +84,7 @@ Practices the community commonly expects when AI does software delivery, and whe
 | Restricted workers | Secret files and risky commands are denied to worker sessions through each CLI's own rules, plus an optional OS sandbox; each dispatch records what was and was not enforced; see [Restrictions](#restricting-what-workers-can-touch) |
 | Team sharing | `shared_dir` in `config.json` moves `policy.json` and `learnings/` into a folder the team keeps in git; tasks and documents stay private. Sync is plain git; see [learnings.md](docs/learnings.md) |
 | Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch). A per-task budget can warn or block further dispatches |
-| Project knowledge | The agent co-writes Markdown docs from your instructions and selected source files, then can sync approved knowledge docs bidirectionally with Confluence. No repo-wide scan; conflicts are preserved for your decision and deletions are never propagated automatically. See [knowledge-pipeline.md](docs/knowledge-pipeline.md) |
+| Project knowledge | The agent co-writes Markdown docs from your instructions and selected source files, then publishes them one way, from your local files to Confluence, when you ask. No repo-wide scan; edits made on Confluence are never pulled back (you are warned before they are overwritten), and deletions are never propagated. See [knowledge-pipeline.md](docs/knowledge-pipeline.md) |
 
 **Roadmap:** knowledge synthesis and freshness tracking remain in [BACKLOG.md](BACKLOG.md).
 
@@ -257,6 +257,7 @@ Every stage is a separate AI session that costs time and tokens, so most of the 
 - Set `test_command` for repos with more than one solution or project, otherwise `run_tests` fails at once.
 - Put a one-line `description:` in each skill and agent file of the repo. Analysis prompts list these files by description instead of including them, so the description is what lets the session choose.
 - Keep the repo's instruction files short. What the AI CLI loads itself is not repeated in the prompt, and the rest is capped (`repo_instructions_max_chars`, default 12000).
+- Saved knowledge pages reach worker sessions as a short index (path, type, summary, what each covers), capped near 3000 characters; the session opens a page only when it fits the task, and the code wins when a page disagrees. Nothing is added when a project has no pages. Turn it off with `knowledge_in_prompts: false`, globally or per project.
 - Set a budget (`budget.task_tokens`, `action: "warn"`) and ask "what did this task cost?" (`get_usage`). Copilot reports no usage, so its numbers are lower bounds.
 - Turn on `worktree` only to run stories in parallel: each one is a full copy of the repo.
 

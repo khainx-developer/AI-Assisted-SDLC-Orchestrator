@@ -39,7 +39,6 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 | `read_knowledge_sync_baseline` | Reads the last-synced content for one mapped document |
 | `reconcile_knowledge_document` | Compares local and remote content against the baseline; never writes either side |
 | `record_knowledge_sync_baseline` | Records a successful, user-approved remote write/adoption and its local baseline |
-| `apply_remote_knowledge_document` | Applies a user-approved remote edit only if the local file has not changed since it was read |
 | `dispatch_test_authoring_task` | Optional tests-first step: read+write session that writes only the failing tests; the files it wrote are frozen for the coding session |
 | `dispatch_coding_task` | Read+write session on the task branch (never `main`/`master`), in the repo checkout, starting a new branch from the task's `base_branch`. Refused while another task's write session is running in the same repo. Gets learnings injected. Checks the plan's scope (`target_files`), frozen tests (`frozen_from_dispatch`) and reports `spec_wrong` |
 | `dispatch_review_task` | Optional independent code review: read-only session on a different platform or model than the coder (`review_platform` in config.json), given the branch diff against `base_branch` (default `main`, else `master`) plus the requirement and plan as `context`. The call reports `independent` and why; the result's `artifact` is the review (verdict, findings, plan compliance, tests). Advice only, not recorded as a stage document |

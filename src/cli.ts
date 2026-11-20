@@ -103,7 +103,17 @@ if (argv[0] === "knowledge") {
     console.log(formatModuleReport(r) || `module page agrees with the repo (${r.citations} citations)`);
     process.exit(r.ok ? 0 : 1);
   }
-  console.error("usage: knowledge claims|repair|check-module (project knowledge is drafted in chat from user-selected context; no project scan is available)");
+  if (argv[1] === "freshness") {
+    if (!oi("repo")) { console.error("usage: knowledge freshness --repo <path> [--page <file.md>]\n       checks whether knowledge pages still match the code they cite (all pages in the project's knowledge store, or one file); exits 1 if any page is stale, broken or unknown"); process.exit(1); }
+    const { checkFreshness, formatFreshness } = await import("./knowledge/freshness.js");
+    const { listKnowledgeDocuments, readKnowledgeDocument } = await import("./knowledge/storage.js");
+    const pages = oi("page") ? [{ name: oi("page")!, md: readFileSync(oi("page")!, "utf8") }] : listKnowledgeDocuments(oi("repo")!).documents.map((d) => ({ name: d.path, md: readKnowledgeDocument(oi("repo")!, d.path).content }));
+    if (!pages.length) { console.log("no knowledge pages"); process.exit(0); }
+    const reports = pages.map((p) => ({ name: p.name, r: checkFreshness(oi("repo")!, p.md) }));
+    for (const x of reports) console.log(formatFreshness(x.name, x.r));
+    process.exit(reports.every((x) => x.r.state === "fresh" || x.r.state === "shifted") ? 0 : 1);
+  }
+  console.error("usage: knowledge claims|repair|check-module|freshness (project knowledge is drafted in chat from user-selected context; no project scan is available)");
   process.exit(1);
 }
 if (argv[0] === "evals") {

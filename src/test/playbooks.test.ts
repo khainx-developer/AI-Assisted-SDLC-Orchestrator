@@ -25,3 +25,11 @@ test("the moved sections are no longer in the always-loaded prompt", () => {
   assert.ok(!prompt.includes("## Changing configuration"));
   assert.ok(!prompt.includes("## Removing a task"));
 });
+
+test("knowledge sync is one way: the playbook never pulls from Confluence, and no tool can", async () => {
+  const text = readPlaybook("project-knowledge");
+  assert.match(text, /ONE WAY: local to Confluence/);
+  assert.ok(!text.includes("apply_remote_knowledge_document"));
+  const server = readFileSync(join(bundledPlaybooksDir, "..", "..", "src", "dispatch", "server.ts"), "utf8");
+  assert.ok(!/server\.tool\(\s*"apply_remote_knowledge_document"/.test(server));
+});

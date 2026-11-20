@@ -25,6 +25,7 @@ export const PROJECT_SETTINGS: Record<string, Spec & { global?: boolean }> = {
   scope_allow: { kind: "string[]", global: true, help: "extra paths always allowed by the scope check" },
   redact_secrets: { kind: "boolean", global: true, help: "remove secret-looking strings from prompts" },
   repo_instructions_max_chars: { kind: "number", global: true, help: "cap on characters of the repo's own instruction files put in analysis prompts (default 12000; 0 = none)" },
+  knowledge_in_prompts: { kind: "boolean", global: true, help: "put an index of the project's knowledge pages in worker prompts (default true; nothing is added without pages)" },
   worktree: { kind: "boolean", help: "give each task its own git worktree so stories can run in parallel (default false)" },
   worktree_setup: { kind: "string", help: "command run once in each new worktree, e.g. npm ci" },
 };

@@ -11,12 +11,12 @@ import { PLATFORMS, resolvePlatform } from "./platforms.js";
 import { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } from "./prompt.js";
 import { learningsText } from "../common/learnings.js";
 import { repoInstructionsText } from "./repo-instructions.js";
-import { repoInstructionsMax } from "../common/config.js";
+import { repoInstructionsMax, knowledgeInPrompts } from "../common/config.js";
+import { knowledgeIndex } from "../knowledge/index-block.js";
 import { addProject, removeProject, updateSetting, describeConfig } from "../common/config-edit.js";
 import { prepareWorkDir, existingWorktree, removeWorktree } from "./checkout.js";
 import { startAgentDispatch, startTestDispatch, getDispatch, cancelDispatch, ensureBranch, detectTestCommand } from "./runner.js";
 import {
-  applyRemoteKnowledgeDocument,
   configureKnowledgeSync,
   getKnowledgeSyncState,
   listKnowledgeDocuments,
@@ -28,8 +28,17 @@ import {
   recordKnowledgeSyncBaseline,
   writeKnowledgeDocument,
 } from "../knowledge/storage.js";
+import { checkFreshness } from "../knowledge/freshness.js";
+import { planPublish, writeIndexPage, isGenerated } from "../knowledge/publish-plan.js";
 
 const server = new McpServer({ name: "dispatch", version: "0.1.0" });
+
+/** The knowledge index for a worker prompt, plus the folder to add to its read-only roots. Empty when switched off or when there are no pages. */
+function knowledgeFor(projectRoot: string, taskFiles: string[] = []): { text: string | null; roots: string[] } {
+  if (!knowledgeInPrompts(projectRoot)) return { text: null, roots: [] };
+  const k = knowledgeIndex(projectRoot, taskFiles);
+  return k ? { text: k.text, roots: [k.dir] } : { text: null, roots: [] };
+}
 
 type Result = { content: { type: "text"; text: string }[]; isError?: boolean };
 async function run(fn: () => unknown | Promise<unknown>): Promise<Result> {
@@ -94,6 +103,30 @@ server.tool(
   "List saved Markdown knowledge documents for one project. This reads only the separate knowledge store, never the project repository.",
   { project_root: z.string().min(1) },
   (a) => run(() => listKnowledgeDocuments(a.project_root))
+);
+
+server.tool(
+  "check_knowledge_freshness",
+  "Check whether saved knowledge pages still match the code they cite. No model call: it reads each page's `Source: <repo>@<commit>` line and asks git which cited files and lines changed since. States: fresh, shifted (cited file changed elsewhere), stale (cited lines changed), broken (cited file gone), unknown (no usable Source commit). Pass relative_path for one page, or omit it to check every page in the project's knowledge store. It reads the repository only through git and the cited paths, and never scans it.",
+  { project_root: z.string().min(1), relative_path: z.string().optional() },
+  (a) => run(() => {
+    const paths = a.relative_path ? [a.relative_path] : listKnowledgeDocuments(a.project_root).documents.map((d) => d.path).filter((p) => !isGenerated(p));
+    return paths.map((p) => ({ page: p, ...checkFreshness(a.project_root, readKnowledgeDocument(a.project_root, p).content) }));
+  })
+);
+
+server.tool(
+  "plan_knowledge_publish",
+  "What publishing the project's knowledge pages to Confluence would do, worked out locally (no remote call, nothing written). For each page: the Confluence title to use (`<project> / <page title>`), the labels to set (sdlc-knowledge, sdlc-type-<type>, sdlc-project-<project>), its freshness, the page it is already mapped to, and whether publishing renames it. Show this in the sync preview. A rename or a stale or broken page needs the user's explicit approval like any other write.",
+  { project_root: z.string().min(1) },
+  (a) => run(() => planPublish(a.project_root))
+);
+
+server.tool(
+  "write_knowledge_index",
+  "Regenerate `_index.md` in the knowledge store: a generated overview page listing every knowledge page with its type, summary, scope, checked commit and freshness. It is the one page that is overwritten without asking, because it is generated. It is synced to Confluence like any other page, with the same preview and approval.",
+  { project_root: z.string().min(1) },
+  (a) => run(() => writeIndexPage(a.project_root))
 );
 
 server.tool(
@@ -182,30 +215,7 @@ server.tool(
   }))
 );
 
-server.tool(
-  "apply_remote_knowledge_document",
-  "Apply a user-approved Confluence edit to its already-mapped local Markdown document. Requires the local content hash read during reconciliation and confirmed=true; refuses if the local file changed in the meantime, then updates its sync baseline.",
-  {
-    project_root: z.string().min(1),
-    relative_path: z.string().min(1),
-    page_id: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    content: z.string(),
-    expected_local_hash: z.string().regex(/^[0-9a-f]{64}$/i),
-    remote_version: z.number().int().min(1).optional(),
-    confirmed: z.boolean(),
-  },
-  (a) => run(() => applyRemoteKnowledgeDocument(a.project_root, {
-    relativePath: a.relative_path,
-    pageId: a.page_id,
-    title: a.title,
-    content: a.content,
-    expectedLocalHash: a.expected_local_hash,
-    remoteVersion: a.remote_version,
-    confirmed: a.confirmed,
-  }))
-);
-
+// Confluence to local pull (apply_remote_knowledge_document in storage.ts) is parked: sync is one way, local to Confluence. See BACKLOG.md.
 server.tool(
   "read_project_source_files",
   "Read only the exact relative source-file paths explicitly supplied by the user. No directory listing, globbing, recursive traversal, or repository scan is performed. Secret-like files are denied, content is size-capped and redacted, and returned lines are numbered.",
@@ -224,11 +234,12 @@ server.tool(
     const cfg = loadConfig();
     const skill = loadSkill(a.skill, cfg.skills_dir ?? bundledSkillsDir);
     const roots = a.additional_read_roots ?? [];
+    const kn = knowledgeFor(a.project_root);
     const repos = projectRepos(a.project_root); // a workspace's analysis runs at its root and may read every child
     const platformId = pickPlatform("analysis", a.project_root, a.platform ?? undefined);
     const m = await startAgentDispatch({
       kind: "analysis", overrideBudget: a.override_budget, task_id: a.task_id, platformId, skill_version: skill.version, repos,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, platformId) }) },
+      req: { projectRoot: a.project_root, extraReadRoots: [...roots, ...kn.roots], model: a.model ?? projectConfig(a.project_root)?.model, prompt: analysisPrompt({ skill: a.skill, skillBody: skill.body, instructions: a.instructions, projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), knowledge: kn.text, repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, platformId) }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status };
   })
@@ -251,12 +262,13 @@ server.tool(
     const diff = await branchDiff(a.project_root, a.branch, a.base_branch);
     const choice = chooseReviewer({ taskId: a.task_id, projectRoot: a.project_root, explicit: a.platform ?? undefined, model: a.model, fallback: pickPlatform("analysis", a.project_root) });
     const roots = a.additional_read_roots ?? [];
+    const kn = knowledgeFor(a.project_root);
     const repos = projectRepos(a.project_root);
     // the repo-wide model belongs to the platform that usually works on it; on another platform it may not exist, so only an explicit model is passed there
     const model = a.model ?? (choice.platform === choice.coded_by?.platform ? projectConfig(a.project_root)?.model : undefined);
     const m = await startAgentDispatch({
       kind: "analysis", overrideBudget: a.override_budget, task_id: a.task_id, platformId: choice.platform, skill_version: skill.version, repos,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model, prompt: analysisPrompt({ skill: "code-review", skillBody: skill.body, instructions: reviewInstructions({ context: a.context, branch: a.branch, diff }), projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, choice.platform) }) },
+      req: { projectRoot: a.project_root, extraReadRoots: [...roots, ...kn.roots], model, prompt: analysisPrompt({ skill: "code-review", skillBody: skill.body, instructions: reviewInstructions({ context: a.context, branch: a.branch, diff }), projectRoot: a.project_root, readRoots: roots, learnings: learningsText(a.project_root), knowledge: kn.text, repoInstructions: repoInstructionsText(a.project_root, repoInstructionsMax(a.project_root), repos, choice.platform) }) },
     });
     return {
       dispatch_id: m.dispatch_id, platform: m.platform, skill_version: skill.version, status: m.status,
@@ -288,9 +300,10 @@ server.tool(
     requireGitRepo(a.project_root);
     const workDir = await prepareWorkDir(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
+    const kn = knowledgeFor(a.project_root);
     const m = await startAgentDispatch({
       workDir: workDir === a.project_root ? undefined : workDir, kind: "test-authoring", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, testPaths: a.test_paths,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root) }) },
+      req: { projectRoot: a.project_root, extraReadRoots: [...roots, ...kn.roots], model: a.model ?? projectConfig(a.project_root)?.model, prompt: testAuthoringPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, testPaths: a.test_paths, learnings: learningsText(a.project_root), knowledge: kn.text }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, worktree: m.worktree };
   })
@@ -313,9 +326,10 @@ server.tool(
     const frozenFiles = a.frozen_from_dispatch ? frozenFilesFrom(a.task_id, a.frozen_from_dispatch) : undefined;
     const workDir = await prepareWorkDir(a.project_root, a.branch, a.task_id, a.base_branch);
     const roots = a.additional_read_roots ?? [];
+    const kn = knowledgeFor(a.project_root, a.target_files ?? []);
     const m = await startAgentDispatch({
       workDir: workDir === a.project_root ? undefined : workDir, kind: "coding", overrideBudget: a.override_budget, task_id: a.task_id, platformId: pickPlatform("coding", a.project_root, a.platform ?? undefined), branch: a.branch, targetFiles: a.target_files, frozenFiles,
-      req: { projectRoot: a.project_root, extraReadRoots: roots, model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root) }) },
+      req: { projectRoot: a.project_root, extraReadRoots: [...roots, ...kn.roots], model: a.model ?? projectConfig(a.project_root)?.model, prompt: codingPrompt({ instructions: a.instructions, projectRoot: workDir, branch: a.branch, readRoots: roots, targetFiles: a.target_files, frozenFiles, learnings: learningsText(a.project_root), knowledge: kn.text }) },
     });
     return { dispatch_id: m.dispatch_id, platform: m.platform, branch: a.branch, status: m.status, worktree: m.worktree, frozen_files: frozenFiles ?? [] };
   })

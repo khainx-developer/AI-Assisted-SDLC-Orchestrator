@@ -14,7 +14,14 @@ From the workflow review of 2026-11-18, most valuable first. Research sources we
 6. **Cost caps per kind.** Per-kind timeout and token cap (analysis stalls should be caught sooner), and a skip-design shortcut when `has_precedent` is true and the change is not breaking.
 7. **Hooks for in-session enforcement (Claude Code).** Block a write outside the plan's scope or a secret read as it happens, instead of failing the dispatch afterwards. Could also give Claude workers structured output and a live tail via the Agent SDK (streaming progress is listed as open in architecture.md).
 8. **Orchestrator prompt eval.** Evals do not run the orchestrator's own system prompt; routing mistakes there cost more than a bad document.
-10. **Project knowledge synthesis and freshness.** The agent drafts user-directed Markdown from chat context and exact user-selected source files, saves approved drafts outside the target repo, and supports user-approved bidirectional Confluence sync. Do not add automatic repository scanning or survey generation; it is unsuitable for large repositories. Remaining work: synthesis across manually selected documents and freshness tracking. See [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md).
+10. **Project knowledge: what is left.** Built: user-directed drafting from exact files, a page header with a `Source` commit, a git-based freshness check, a knowledge index in worker prompts, and one-way sync from local files to Confluence with readable titles, labels, a generated index page and a rename preview. See [docs/knowledge-base-design.md](docs/knowledge-base-design.md). Not built, in rough order:
+    - **`knowledge-refresh`:** re-verify only the claims whose cited lines changed (using `claim-verification`) and propose edits, so "update the docs" after a code change touches only what moved.
+    - **Server-side gate for stale pages:** today "publish anyway" for a stale or broken page is a playbook rule. Enforce it in the sync code.
+    - **Confluence to local pull:** parked on purpose, sync is one way. The storage code (`applyRemoteKnowledgeDocument`) and its tests stay, but the tool is not registered. Re-register it and restore the conflict rules in the playbook if you want it back.
+    - **Read-only knowledge folder for coding sessions:** it is a prompt rule today ("never modify"), not a mount.
+    - **Drift reports to stale marks:** when a worker reports that a page contradicts the code, mark the page stale automatically.
+    - **Rename-aware freshness:** a cited file moved with `git mv` shows as `broken`.
+    - **Jira reference comment and `ticket-readiness`:** dropped from this work. Knowledge is for AI use, and nothing here calls Jira.
 9. **Archive finished changes as a delta against the repo's spec** (idea borrowed from OpenSpec), so later requirement stages start from what the system does now. Not adopting Spec Kit or OpenSpec themselves.
 
 
