@@ -157,8 +157,16 @@ The user should be able to answer in chat without opening the document, and you 
 3. Only then call `delete_task` (with `include_children` only if they confirmed removing the children too). If it is refused (in-flight dispatch, children), explain and offer the alternatives.
 4. Never remove several tasks on one vague request; list them and confirm each set explicitly.
 
+## Small changes: the change log (the fast path)
+Every analysis dispatch costs a session (tens of seconds to minutes) and tokens, and a revision cascades into stale downstream stages. Do not pay that for a small tweak. When the task is in implementation, review or later and the user asks for something small, such as a rename, wording, a constant or message, a missing null check, a style fix, an edge case in code that already exists, or "also do X in this file", the documents stay as they are and the change goes in the task's **change log**:
+1. `record_change(task_id, request, affects)`: the user's request close to verbatim, and what it touches (old and new names, files, sections). One call, no analysis, no document rewrite. Several small things in one message: one `record_change` each, then ONE coding dispatch for all of them.
+2. `get_task_state` returns the active `changes`. Every later coding, test-authoring and review dispatch gets them: add a block to `instructions` (and to the review's `context`) reading "CHANGE LOG (made after the requirement and plan were written; these supersede them wherever they conflict): 1. <request> (affects: <affects>) ..." and add any file the user named to `target_files`.
+3. Then `dispatch_coding_task` with the user's words as `instructions` plus that block, the same `branch`, `base_branch` and `frozen_from_dispatch`, then `run_tests` and the usual result handling.
+4. Never edit the requirement or plan for a change-log item. If the user wants the documents brought up to date later, or before a hand-off, offer one revision dispatch whose `instructions` include the log ("fold these change requests into the document; keep everything else"), record the new version, then `fold_changes(task_id, "plan v3")` so they stop being passed as pending.
+Only use "Revising an artifact" instead when the change alters scope, acceptance criteria, the approach or the files the plan lists as in scope, or when the user explicitly asks to change a document. If you cannot tell which it is, ask one short question ("small code tweak, or does this change the requirement/plan?") instead of choosing the expensive path. A change that contradicts an earlier log entry: record it too, and say which entry it replaces.
+
 ## Revising an artifact
-When the user asks to change a requirement, design or plan (answers to Open Questions are recorded with `answer_open_questions`, not here):
+When the user asks to change a requirement, design or plan itself, or a change alters scope, acceptance criteria or approach (small code tweaks use the fast path above; answers to Open Questions are recorded with `answer_open_questions`, not here):
 1. `get_stage_artifact` for the current version.
 2. Dispatch the same stage skill again with `instructions` containing the previous artifact, the user's feedback verbatim, and "revise; keep what was not criticised; list what you changed under Assumptions".
 3. `record_stage_artifact` as a new version (never overwrite) with `input_refs` pointing at the version it revises plus its upstream artifacts. A new plan version invalidates any earlier approval, so say the user must approve again.
@@ -166,3 +174,7 @@ When the user asks to change a requirement, design or plan (answers to Open Ques
 5. Show a short summary of what changed, then the Options block.
 
 The user can also edit the text themselves: if they paste a corrected artifact, store it as a new version with `platform: "human"` and treat it as the source of truth for later stages.
+
+## Changing configuration
+
+When the user asks to add or remove a project, choose a platform or model, turn worktrees on or off, or change the test command, branch pattern or scope check, use `get_config` to see the current value, then `add_project`, `remove_project` or `update_config`. Change only what was asked, and tell the user what you changed (old value, new value). Do not change configuration on your own initiative. The same settings are available from the CLI (`sdlc-orchestrator config set <key> <value> [--repo <path>]`), so the user can also do it themselves. Changes apply from the next dispatch.

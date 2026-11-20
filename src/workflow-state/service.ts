@@ -182,7 +182,9 @@ export class Workflow {
       .prepare("SELECT stage, MAX(version) AS latest_version FROM stage_artifacts WHERE task_id=? GROUP BY stage")
       .all(task_id) as { stage: string; latest_version: number }[])
       .map((a) => ({ ...a, path: artifactAbs(artifactRel(task_id, a.stage, a.latest_version)) }));
-    return { ...t, children, last_edge_case: last ?? null, history, artifacts };
+    const changes = this.listChanges(task_id);
+    return { ...t, children, last_edge_case: last ?? null, history, artifacts, changes: changes.length ? changes : undefined,
+      changes_note: changes.length ? "These change requests were made after the documents were written and supersede them where they conflict. Pass them to coding and review sessions." : undefined };
   }
 
   /** resume lookup: accepts a task_id, a jira key, or a PR number */
@@ -373,6 +375,31 @@ export class Workflow {
     return renderGuidance({ task_id, stage, version, path, qs, nextStage: stages[stages.indexOf(stage) + 1], recorded });
   }
 
+  /**
+   * The change log: small change requests made after the documents were approved (a rename, an extra edge case, a tweak).
+   * Later sessions follow the log on top of the documents, so the documents need not be regenerated for each one.
+   */
+  recordChange(task_id: string, request: string, affects?: string) {
+    const t = this.shape(this.row(task_id));
+    if (!request.trim()) throw new WorkflowError("request must not be empty");
+    const r = this.db.prepare("INSERT INTO change_requests (task_id,stage,request,affects,created_at) VALUES (?,?,?,?,?)").run(task_id, t.stage, request.trim(), affects?.trim() || null, now());
+    this.db.prepare("INSERT INTO search_fts (kind,task_id,project_root,stage,text) VALUES ('change',?,?,?,?)").run(task_id, t.project_root, t.stage, `${request}\n${affects ?? ""}`);
+    return { ok: true, id: Number(r.lastInsertRowid), changes: this.listChanges(task_id) };
+  }
+
+  /** Active change requests, oldest first. Folded ones (already merged into a document version) are left out unless all is set. */
+  listChanges(task_id: string, all = false) {
+    return this.db.prepare(`SELECT id, stage, request, affects, status, folded_into, created_at FROM change_requests WHERE task_id=? ${all ? "" : "AND status='active'"} ORDER BY id`).all(task_id) as any[];
+  }
+
+  /** Mark change requests as merged into a new document version, so they stop being listed as pending. */
+  foldChanges(task_id: string, folded_into: string, ids?: number[]) {
+    this.row(task_id);
+    const active = this.listChanges(task_id).filter((c) => !ids || ids.includes(c.id));
+    for (const c of active) this.db.prepare("UPDATE change_requests SET status='folded', folded_into=? WHERE id=?").run(folded_into, c.id);
+    return { ok: true, folded: active.map((c) => c.id) };
+  }
+
   recordEdgeCase(task_id: string, description: string, decision: string, reasoning: string) {
     const t = this.shape(this.row(task_id));
     this.db
@@ -516,7 +543,7 @@ export class Workflow {
     this.db.exec("BEGIN");
     try {
       for (const id of [...ids].reverse()) {
-        for (const table of ["transitions", "stage_artifacts", "edge_cases", "approvals", "search_fts"])
+        for (const table of ["transitions", "stage_artifacts", "edge_cases", "change_requests", "approvals", "search_fts"])
           this.db.prepare(`DELETE FROM ${table} WHERE task_id=?`).run(id);
         this.db.prepare("DELETE FROM tasks WHERE task_id=?").run(id);
       }

@@ -38,6 +38,14 @@ sdlc-orchestrator model reset --repo <path>
 sdlc-orchestrator branch show [--repo <path>]                      branch naming pattern in effect (default story/{key})
 sdlc-orchestrator branch set <pattern> [--repo <path>]             e.g. feature/{key}; without --repo sets the global pattern
 sdlc-orchestrator branch reset [--repo <path>]                     back to the default (or the global pattern, for a repo)
+sdlc-orchestrator config show [--repo <path>]                      everything configured, global and per repo
+sdlc-orchestrator config add-project <path>                        register a repo
+sdlc-orchestrator config remove-project <path>
+sdlc-orchestrator config set <key> <value> [--repo <path>]         without --repo: a global setting. Keys: platform, analysis_platform, coding_platform,
+                                                                   review_platform, model, branch_pattern, test_command, tests_first, scope_check,
+                                                                   scope_allow, redact_secrets, worktree, worktree_setup (repo); default_platform,
+                                                                   dispatch_timeout_minutes (global); platforms.<id>.model (global)
+sdlc-orchestrator config unset <key> [--repo <path>]               e.g. config set worktree true --repo D:/work/App
 sdlc-orchestrator dispatches usage [--task <id>] [--days N]        token use and cost of finished dispatches
 sdlc-orchestrator evals check                                   offline check of the skill eval cases against their golden artifacts
 sdlc-orchestrator evals run [--case <n>] [--platform <p>] [--model <m>] [--repeat N]   run the cases through real AI sessions (costs money)
@@ -126,6 +134,7 @@ if (argv[0] === "evals") {
 if (argv[0] === "repos") { reposCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] === "model") { modelCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] === "branch") { await branchCommand(argv.slice(1)); process.exit(0); }
+if (argv[0] === "config") { await configCommand(argv.slice(1)); process.exit(0); }
 if (argv[0] !== "install" || argv.includes("-h") || argv.includes("--help")) {
   console.log(HELP);
   process.exit(argv[0] === "install" || argv.length === 0 ? 0 : 1);
@@ -413,4 +422,21 @@ async function tasksCommand(a: string[]) {
     if (!rest.includes("--yes")) { console.log(`would permanently remove ${t.task_id} "${t.title}" and its artifacts; re-run with --yes to confirm`); return; }
     console.log(JSON.stringify(wf.deleteTask(t.task_id, rest.includes("--with-children")), null, 2));
   } else console.error("usage: tasks list | tasks show <task_id|jira-key|pr#> [--stage requirement|design|plan] | tasks remove <ref> --yes [--with-children]");
+}
+
+async function configCommand(a: string[]) {
+  const ce = await import("./common/config-edit.js");
+  const [sub, ...rest] = a;
+  const ri = rest.indexOf("--repo");
+  if (ri >= 0 && !rest[ri + 1]) { console.error("--repo needs a path"); process.exit(1); }
+  const repo = ri >= 0 ? rest[ri + 1] : undefined;
+  const pos = rest.filter((_, i) => ri < 0 || (i !== ri && i !== ri + 1));
+  try {
+    if (sub === "show") console.log(JSON.stringify(ce.describeConfig(repo), null, 2));
+    else if (sub === "add-project" && pos[0]) { const r = ce.addProject(pos[0]); console.log(r.added ? `added ${r.project_root}` : `${r.project_root} is already registered`); }
+    else if (sub === "remove-project" && pos[0]) { const r = ce.removeProject(pos[0]); console.log(r.removed ? `removed ${r.project_root}` : `${r.project_root} was not registered`); }
+    else if (sub === "set" && pos.length === 2) { const r = ce.updateSetting(repo, pos[0], pos[1]); console.log(`${r.scope}: ${r.key} = ${JSON.stringify(r.value)}`); }
+    else if (sub === "unset" && pos.length === 1) { const r = ce.updateSetting(repo, pos[0], null); console.log(`${r.scope}: ${r.key} unset`); }
+    else { console.error("usage: config show [--repo <path>] | add-project <path> | remove-project <path> | set <key> <value> [--repo <path>] | unset <key> [--repo <path>]"); process.exit(1); }
+  } catch (e: any) { console.error(`error: ${e.message}`); process.exit(1); }
 }

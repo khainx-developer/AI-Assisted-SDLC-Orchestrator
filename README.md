@@ -189,6 +189,12 @@ node dist/cli.js repos list
 node dist/cli.js repos add D:/work/ProjectB
 node dist/cli.js repos remove D:/work/ProjectB
 
+# change settings from the CLI (or ask the chat agent, which uses the same code through MCP tools)
+node dist/cli.js config show [--repo D:/work/ProjectA]
+node dist/cli.js config set worktree true --repo D:/work/ProjectA     # also: platform, model, test_command, tests_first, scope_check, worktree_setup, ...
+node dist/cli.js config set default_platform copilot                  # without --repo: a global setting
+node dist/cli.js config unset worktree --repo D:/work/ProjectA
+
 # AI model per repo (overrides platforms.<id>.model; a model named on one dispatch overrides both)
 node dist/cli.js model show [--repo D:/work/ProjectA]
 node dist/cli.js model set <model-name> --repo D:/work/ProjectA

@@ -108,6 +108,21 @@ server.tool(
   })
 );
 server.tool(
+  "record_change", "Log a small change request made after the documents were written (a rename, an extra edge case, a tweak) in the task's change log. The documents are NOT regenerated: coding and review sessions follow the log on top of them. Use this instead of revising the requirement or plan for anything that does not change scope, acceptance criteria or approach. Quote the user's request, and say in `affects` what it touches (a name, files, which document sections).",
+  { task_id: tid, request: z.string().describe("the user's request, close to verbatim"), affects: z.string().optional().describe("what it touches: old and new names, files, document sections") },
+  (a) => run(() => wf.recordChange(a.task_id, a.request, a.affects))
+);
+server.tool(
+  "list_changes", "The task's change log (get_task_state also includes the active ones). all=true includes changes already folded into a document.",
+  { task_id: tid, all: z.boolean().optional() },
+  (a) => run(() => wf.listChanges(a.task_id, a.all ?? false))
+);
+server.tool(
+  "fold_changes", "After a requirement/plan revision that already contains some change requests, mark them as folded so they stop being passed to sessions. folded_into names the document version, e.g. 'plan v3'. Omit ids to fold every active change.",
+  { task_id: tid, folded_into: z.string(), ids: z.array(z.number().int()).optional() },
+  (a) => run(() => wf.foldChanges(a.task_id, a.folded_into, a.ids))
+);
+server.tool(
   "record_edge_case", "Log a decision made by judgment because no policy rule matched.",
   { task_id: tid, description: z.string(), decision: z.string(), reasoning: z.string() },
   (a) => run(() => wf.recordEdgeCase(a.task_id, a.description, a.decision, a.reasoning))

@@ -333,3 +333,21 @@ test("base branch: defaults to what the repo has checked out, never to another s
 
   assert.equal(wf.createTask({ project_root: join(tmpdir(), "not-a-repo-xyz"), title: "t", source: "adhoc", flags: light }).base_branch, null);
 });
+
+test("change log: small changes are logged, shown in task state, folded later, and removed with the task", () => {
+  const wf = new Workflow();
+  const t = wf.createTask({ project_root: "/r", title: "cl", source: "adhoc", flags: light });
+  assert.equal((wf.getTask(t.task_id) as any).changes, undefined);
+  const r = wf.recordChange(t.task_id, "use Appointment Emails instead of Appointment Email", "rename in the migration script");
+  wf.recordChange(t.task_id, "also trim the name");
+  assert.equal(r.changes.length, 1);
+  const st: any = wf.getTask(t.task_id);
+  assert.equal(st.changes.length, 2);
+  assert.match(st.changes_note, /supersede/);
+  assert.throws(() => wf.recordChange(t.task_id, "  "), /must not be empty/);
+  wf.foldChanges(t.task_id, "plan v2", [r.id]);
+  assert.equal((wf.getTask(t.task_id) as any).changes.length, 1);
+  assert.equal(wf.listChanges(t.task_id, true).length, 2);
+  wf.deleteTask(t.task_id);
+  assert.equal(wf.db.prepare("SELECT COUNT(*) AS n FROM change_requests WHERE task_id=?").get(t.task_id)?.n, 0);
+});

@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS edge_cases (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
   description TEXT, decision TEXT, reasoning TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS change_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  stage TEXT, request TEXT NOT NULL, affects TEXT, status TEXT NOT NULL DEFAULT 'active',
+  folded_into TEXT, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS approvals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT NOT NULL REFERENCES tasks(task_id),

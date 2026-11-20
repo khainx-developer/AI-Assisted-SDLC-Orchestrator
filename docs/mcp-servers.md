@@ -16,6 +16,7 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 | Open questions | `get_open_questions` (parsed list + ready-to-print reply with how to answer and Options), `answer_open_questions` (records answers as a new version, no model call) |
 | Policy | `get_policy`, `update_policy` (validated; a bad patch is rejected) |
 | Edge cases and search | `record_edge_case`, `search_precedent`, `list_zero_hit_searches` |
+| Change log | `record_change`, `list_changes`, `fold_changes`: small change requests made after the documents were written; sessions follow the log on top of the documents, so nothing is regenerated |
 | Review prompt | `get_review_signal` (is an `edge-case-review` due: problems since the last review vs `edge_case_review_after`), `mark_edge_cases_reviewed` |
 | Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap` (also says whether the other story has the same `base_branch`), `update_linked_refs`, `set_task_base` |
 | Spec proven wrong | `report_spec_wrong` (sends a task back to plan / design / requirement with the issue as an open question) |
@@ -48,6 +49,10 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 | `cancel_dispatch` | Stops an in-flight dispatch (kills the CLI and its child processes) and records it as failed so the stage can be retried. Only after the human chooses it |
 | `get_usage` | Token use (and cost where the CLI reports it) of finished dispatches, in total and by kind, platform and task. `task_id` narrows it to one story. Estimated numbers are a lower bound. With `task_id` and `project_root` it also shows the task against its budget. All `dispatch_*` tools take `override_budget` (only after the human agrees) to continue past a `block` budget |
 | `list_projects` | Registered repos |
+| `get_config` | All settings, global and per project, and which ones can be changed |
+| `add_project`, `remove_project` | Register or unregister a repo (asks the human first) |
+| `update_config` | Set or unset one setting (`worktree`, `platform`, `model`, `test_command`, ...); same validation as `sdlc-orchestrator config set` |
+| `remove_worktree` | Delete a task's git worktree; refuses uncommitted work unless forced |
 | `list_platforms` | Configured AI platforms and routing |
 
 ## Reused, not built
