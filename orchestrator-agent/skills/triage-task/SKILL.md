@@ -15,3 +15,12 @@ Run inline on every new task. Produce the flags object passed to `create_task`. 
 | requirement_clarity | `high` if explicit input/output/acceptance criteria are given (a Jira ticket with filled Acceptance Criteria is high automatically). `low` for vague or one-line ad-hoc requests. |
 
 Heavy = breaking OR not reversible OR clarity low. The server applies this; you only supply honest flags.
+
+Kind. Also pick one `kind` from the task text and start the task description with `Kind: <kind>.` (no schema field; the orchestrator reads it back from the description). The kind changes what each stage must contain, see "Task kinds" in the system prompt. When unsure, use `feature`.
+
+| Kind | Pick it when |
+|---|---|
+| bug | something that should work does not, and a failure can be described or reproduced |
+| refactor | structure changes, behaviour must not |
+| investigation | the human wants an answer ("how does X work", "why is Y slow"), not a change |
+| feature | everything else |

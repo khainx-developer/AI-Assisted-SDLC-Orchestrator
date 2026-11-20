@@ -5,6 +5,7 @@ import { Workflow, WorkflowError } from "./service.js";
 import { readLearnings, writeLearning, removeLearning } from "../common/learnings.js";
 import { completedArtifact, readDispatchMeta } from "../common/dispatch-store.js";
 import { updatePolicy, policyVersion } from "./policy.js";
+import { readPlaybook, listPlaybooks } from "../common/playbooks.js";
 
 const wf = new Workflow();
 try { wf.backup(); } catch (e) { console.error("backup failed:", e); }
@@ -152,6 +153,13 @@ server.tool(
 );
 server.tool("check_file_overlap", "Other pending tasks on the same repo touching any of these files. same_base=false means the two stories branch from different branches, so they only meet if both are merged into one place later.", { task_id: tid, files: z.array(z.string()) }, (a) => run(() => wf.fileOverlaps(a.task_id, a.files)));
 server.tool("search_precedent", "FTS5 search over past artifacts and edge cases.", { query: z.string(), project_root: z.string().optional(), limit: z.number().optional() }, (a) => run(() => wf.searchPrecedent(a.query, a.project_root, a.limit)));
+
+server.tool(
+  "get_playbook",
+  "Read the step-by-step rules of a rare flow that is not in your system prompt. Call it once when the user starts that flow, then follow it exactly. Names: project-knowledge (writing or syncing knowledge documents), remove-task (permanent deletion), configuration (projects, platforms, models, worktrees, test command, branch pattern, scope check).",
+  { name: z.string().describe("playbook name") },
+  (a) => ({ ...(() => { try { return { content: [{ type: "text" as const, text: readPlaybook(a.name) }] }; } catch (e: any) { return { content: [{ type: "text" as const, text: e.message }], isError: true }; } })() })
+);
 
 server.tool(
   "read_learnings", "Durable cross-task notes for a repo, its workspace (when the repo is a child of one) and the global ones (ticketing quirks, process habits, request-phrasing patterns). Read at intake/triage. Dispatch injects the same notes itself, so do not paste them into dispatch instructions.",

@@ -78,6 +78,7 @@ Stay inside this scope. If the change truly needs a file outside it, make the sm
 FROZEN TESTS (do not edit, rename, delete or weaken): ${a.frozenFiles.join(", ")}
 These tests were written first, from the plan, by a different session. Your job is to make them pass by changing the production code. Any change to them is detected and fails this session. If a frozen test is wrong, stop and report it as spec_wrong instead.
 ` : ""}
+If the plan has a Shape section (types, fields, signatures), build exactly that shape. If it cannot be built as written, stop and report spec_wrong instead of drifting from it. Make the smallest change that meets the plan: add no abstraction, layer or option it did not ask for, and fix the cause of a defect rather than guarding against its symptom.
 If the instructions are genuinely ambiguous in a way the plan did not settle (e.g. two plausible targets), STOP and ask rather than guessing.
 ${untrustedNotice("mention it in your summary")}${learningsBlock(a.learnings)}
 === INSTRUCTIONS ===
@@ -100,6 +101,7 @@ ${a.testPaths?.length ? `Put the tests in: ${a.testPaths.join(", ")}
 RULES
 - Write tests only. Do not write or change production code. One exception: if the tests cannot even compile or load without a symbol that does not exist yet, add the smallest stub that throws "not implemented", and name each stub in your summary.
 - Test behaviour the requirement states (inputs, outputs, errors, edge cases), through the public interface. Do not assert on private details, and do not guess names the plan did not give: if a name or signature is not settled, say so under "question" and stop.
+- Ask of each test: if the behaviour were broken (a wrong value, a skipped effect), would it fail; and if only the internals changed, would it still pass? Keep it only if both are yes. Take expected values from the requirement, never from running the code. Pair every "this never happens" case with one where it does.
 - Each test must fail now for the right reason: it runs and an assertion fails (or the stub throws), not an import, syntax or setup error. Do not write a test that already passes.
 - Keep the set small and meaningful: cover each acceptance criterion and the main edge cases, no padding.
 - If the plan or requirement is contradictory or impossible to test, stop and report spec_wrong.

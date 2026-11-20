@@ -32,8 +32,7 @@ test("SYSTEM_PROMPT.md and every skill name only tools that exist", () => {
 });
 
 test("project knowledge is chat-led and limited to exact user-selected source files", () => {
-  const prompt = readFileSync(join(root, "orchestrator-agent", "SYSTEM_PROMPT.md"), "utf8");
-  const section = prompt.split("## Project knowledge (chat-led, user-scoped)")[1]?.split("\n## ")[0] ?? "";
+  const section = readFileSync(join(root, "orchestrator-agent", "playbooks", "project-knowledge.md"), "utf8");
   assert.match(section, /Never scan, survey, crawl, recursively list, glob, or search the target repository/);
   assert.match(section, /Only call `read_project_source_files` for exact relative file paths the user has named/);
   assert.match(section, /After approval, use `write_knowledge_document`/);
