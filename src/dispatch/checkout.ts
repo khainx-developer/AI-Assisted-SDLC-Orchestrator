@@ -78,16 +78,31 @@ export function existingWorktree(root: string, taskId: string): string | undefin
   return worktreeSettings(root).enabled && existsSync(join(dir, ".git")) ? dir : undefined;
 }
 
-/** Remove a task's worktree (the branch and its commits stay). Refuses while a session runs in it or while it holds uncommitted work, unless force. */
-export async function removeWorktree(root: string, taskId: string, force = false): Promise<{ removed: boolean; path: string }> {
+/**
+ * Remove a task's worktree. With deleteBranch the task branch goes too (the worktree has to go first: git will not delete a
+ * branch that is checked out). The branch is deleted with `-d`, which refuses a branch that is not merged; force uses `-D`.
+ * Refuses while a session runs in the worktree or while it holds uncommitted work, unless force.
+ */
+export async function removeWorktree(root: string, taskId: string, force = false, deleteBranch = false, branchName?: string): Promise<{ removed: boolean; path: string; branch_deleted?: string }> {
   const dir = worktreePath(root, taskId);
-  if (!existsSync(dir)) return { removed: false, path: dir };
-  const running = otherWriteSession(root, taskId, true);
-  if (running) throw new Error(`a ${running.kind} session is still running in this worktree (dispatch ${running.dispatch_id})`);
-  if (!force) {
-    const dirty = await changedFiles(dir);
-    if (dirty.length) throw new Error(`worktree ${dir} has uncommitted work (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", ..." : ""}). Commit it, or pass force=true to discard it.`);
+  const hasDir = existsSync(dir);
+  let branch = branchName;
+  if (hasDir) {
+    const running = otherWriteSession(root, taskId, true);
+    if (running) throw new Error(`a ${running.kind} session is still running in this worktree (dispatch ${running.dispatch_id})`);
+    if (!force) {
+      const dirty = await changedFiles(dir);
+      if (dirty.length) throw new Error(`worktree ${dir} has uncommitted work (${dirty.slice(0, 5).join(", ")}${dirty.length > 5 ? ", ..." : ""}). Commit it, or pass force=true to discard it.`);
+    }
+    if (deleteBranch && !branch) { try { branch = await git(dir, "rev-parse", "--abbrev-ref", "HEAD"); } catch { /* fall through to the missing-branch error */ } }
+    await git(root, "worktree", "remove", ...(force ? ["--force"] : []), dir);
   }
-  await git(root, "worktree", "remove", ...(force ? ["--force"] : []), dir);
-  return { removed: true, path: dir };
+  const out: { removed: boolean; path: string; branch_deleted?: string } = { removed: hasDir, path: dir };
+  if (deleteBranch) {
+    if (!branch || branch === "HEAD") throw new Error(hasDir ? "worktree removed, but its branch could not be determined; pass branch" : "no worktree for this task; pass branch to delete it");
+    try { await git(root, "branch", force ? "-D" : "-d", branch); }
+    catch (e: any) { throw new Error(`${hasDir ? "worktree removed, but " : ""}branch '${branch}' was not deleted: ${e.stderr?.toString().trim() || e.message}. If the work is merged (e.g. squash) and the human agreed, retry with force=true.`); }
+    out.branch_deleted = branch;
+  }
+  return out;
 }

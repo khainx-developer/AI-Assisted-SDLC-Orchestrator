@@ -98,28 +98,28 @@ export function installCommand(argv: string[]): void {
     }
     const agent = `---\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review across AI platforms.\n---\n${prompt}`;
     const dir = join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"));
-    write(join(dir, "agents", "orchestrator.agent.md"), agent);
+    write(join(dir, "agents", "sdlc-orchestrator.agent.md"), agent);
     mergeMcp(join(dir, "mcp-config.json"), true, true);
   }
 
   function installClaude() {
-    const agent = `---\nname: orchestrator\ndescription: SDLC orchestrator. Use to start, resume or inspect tasks that move through requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
+    const agent = `---\nname: sdlc-orchestrator\ndescription: SDLC orchestrator. Use to start, resume or inspect tasks that move through requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
     if (scope === "repo") {
-      write(join(repo!, ".claude", "agents", "orchestrator.md"), agent);
+      write(join(repo!, ".claude", "agents", "sdlc-orchestrator.md"), agent);
       mergeMcp(join(repo!, ".mcp.json"), false);
       return;
     }
-    write(join(homedir(), ".claude", "agents", "orchestrator.md"), agent);
+    write(join(homedir(), ".claude", "agents", "sdlc-orchestrator.md"), agent);
     const cmds = Object.entries(servers).map(([k, v]) => `claude mcp add --scope user ${k} -- ${v.command} "${v.args[0]}"`);
     console.log(`user-scope MCP servers for Claude Code are registered with its own CLI; run:\n  ${cmds.join("\n  ")}`);
   }
 
   function installCursor() {
-    // Always user-global: MCP in ~/.cursor/mcp.json, @orchestrator-agent in ~/.cursor/agents/.
+    // Always user-global: MCP in ~/.cursor/mcp.json, @sdlc-orchestrator in ~/.cursor/agents/.
     // --repo only registers the project in config.json (see writeConfig); nothing is written into the repo.
     mergeMcp(join(homedir(), ".cursor", "mcp.json"), false);
-    const agent = `---\nname: orchestrator-agent\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
-    write(join(homedir(), ".cursor", "agents", "orchestrator-agent.md"), agent);
+    const agent = `---\nname: sdlc-orchestrator\ndescription: SDLC orchestrator. Triages tasks and drives requirement, design, plan, implementation, test and review.\n---\n${prompt}`;
+    write(join(homedir(), ".cursor", "agents", "sdlc-orchestrator.md"), agent);
   }
 
   function writeConfig() {
@@ -165,5 +165,5 @@ export function installCommand(argv: string[]): void {
     }
   }
   writeConfig();
-  console.log("\nDone. Start a new session, then use the orchestrator (Claude Code: orchestrator subagent; Cursor: @orchestrator-agent; Copilot CLI: orchestrator agent).");
+  console.log("\nDone. Start a new session, then use the sdlc-orchestrator agent (Claude Code: subagent; Cursor: @sdlc-orchestrator; Copilot CLI: agent).\nIf an older install left an 'orchestrator' agent behind (orchestrator.md, orchestrator.agent.md or orchestrator-agent.md in the agents folder), delete it.");
 }

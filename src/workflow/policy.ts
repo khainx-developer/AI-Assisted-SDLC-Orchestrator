@@ -16,7 +16,7 @@ const Gate = z.object({
  * anything else parks the task so the run carries on with the others.
  */
 const AutonomySchema = z.object({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** open questions in a requirement or design: take the document's suggested answer (questions without one park the task), or park */
   answer_questions: z.enum(["accept_suggested", "park"]).default("accept_suggested"),
   /** gated stages (usually the plan of risky work): approve automatically unless the task matches never_autonomous, or always park */
@@ -38,6 +38,10 @@ const AutonomySchema = z.object({
   max_attempts_per_task: z.number().int().min(1).default(4),
   /** AI sessions one run may start; the runner stops when it is spent */
   max_dispatches_per_run: z.number().int().min(1).default(40),
+  /** orchestrator agent turns one run may take (each turn is an LLM session); the runner stops when it is spent */
+  max_turns_per_run: z.number().int().min(1).default(100),
+  /** a run always ends after this many hours, even when it was started without a time limit or with a longer one */
+  max_hours_per_run: z.number().positive().default(8),
 });
 export type AutonomyPolicy = z.infer<typeof AutonomySchema>;
 

@@ -13,9 +13,9 @@ Server entries (same for every client):
 
 | Client | Where the servers go | Where the system prompt goes |
 |---|---|---|
-| Claude Code | `claude mcp add --scope user workflow-state -- node <REPO>/dist/mcp/workflow/server.js` (and `dispatch`) | copy `orchestrator-agent/SYSTEM_PROMPT.md` to `~/.claude/agents/orchestrator.md` with frontmatter `name: orchestrator`, `description: SDLC orchestrator` |
-| GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `~/.copilot/agents/orchestrator.agent.md`. Prefer `node dist/cli/index.js install --target copilot-cli --repo <path>` (registers the repo; does not write into the project) |
-| Cursor | `~/.cursor/mcp.json`, under `"mcpServers"` | `~/.cursor/agents/orchestrator-agent.md` (`@orchestrator-agent`). Prefer `node dist/cli/index.js install --target cursor --repo <path>` (registers the repo in orchestrator config; does not write into the project) |
+| Claude Code | `claude mcp add --scope user workflow-state -- node <REPO>/dist/mcp/workflow/server.js` (and `dispatch`) | copy `orchestrator-agent/SYSTEM_PROMPT.md` to `~/.claude/agents/sdlc-orchestrator.md` with frontmatter `name: sdlc-orchestrator`, `description: SDLC orchestrator` |
+| GitHub Copilot CLI | `~/.copilot/mcp-config.json` | `~/.copilot/agents/sdlc-orchestrator.agent.md`. Prefer `node dist/cli/index.js install --target copilot-cli --repo <path>` (registers the repo; does not write into the project) |
+| Cursor | `~/.cursor/mcp.json`, under `"mcpServers"` | `~/.cursor/agents/sdlc-orchestrator.md` (`@sdlc-orchestrator`). Prefer `node dist/cli/index.js install --target cursor --repo <path>` (registers the repo in orchestrator config; does not write into the project) |
 | Claude Desktop | `claude_desktop_config.json`, under `"mcpServers"` | paste into a Project's instructions |
 
 The orchestrator host and the AI platforms used for dispatched work are independent. You can drive from Copilot CLI while analysis runs on Claude and coding on Cursor: set `analysis_platform` / `coding_platform` in `~/.ai-sdlc-orchestrator/config.json` (see `config/config.example.json`).

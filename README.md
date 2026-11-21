@@ -36,60 +36,62 @@ The orchestrator itself stays small: all state lives in the `workflow-state` ser
 **Needs:** Node 22.5+, Git, a chat tool with MCP support (Copilot CLI, Claude Code or Cursor), and the CLI of the AI that does the dispatched work, installed and signed in (Copilot: `npm install -g @github/copilot`, then run `copilot` once). Jira and GitHub MCP access is optional.
 
 ```
-# 1. Build (keep this folder where it is: the tools point at it)
+# 1. Build and link the CLI (keep this folder where it is: the tools point at it)
+#    npm link makes `sdlc-orchestrator` run node dist/cli/index.js from anywhere
 npm install
 npm run build
+npm link
 
 # 2. Install the agent and register the servers (add --dry-run first to preview)
 #    --repo registers a repo and may be repeated; nothing is written into the repo
-node dist/cli/index.js install --target copilot-cli --repo D:/work/ProjectA
-node dist/cli/index.js install --target cursor      --repo D:/work/ProjectA
-node dist/cli/index.js install --target claude                        # prints the `claude mcp add` commands to run
+sdlc-orchestrator install --target copilot-cli --repo D:/work/ProjectA
+sdlc-orchestrator install --target cursor      --repo D:/work/ProjectA
+sdlc-orchestrator install --target claude                        # prints the `claude mcp add` commands to run
 
 # 3. Pin the model the dispatched sessions use (see the note below)
-node dist/cli/index.js config set default_platform copilot
-node dist/cli/index.js config set platforms.copilot.model gpt-6-luna
+sdlc-orchestrator config set default_platform copilot
+sdlc-orchestrator config set platforms.copilot.model gpt-6-luna
 ```
 
-4. Start a **new** chat session so it loads the agent. Select the **orchestrator** agent (Cursor: `@orchestrator-agent`) and say `hi`, then `which repos and AI platforms are set up?`
+4. Start a **new** chat session so it loads the agent. Select the **sdlc-orchestrator** agent (Cursor: `@sdlc-orchestrator`) and say `hi`, then `which repos and AI platforms are set up?`
 
 **The dispatched model is a separate setting.** The orchestrator runs on the model you picked in your chat window. Every stage it dispatches runs in a separate CLI session with its own model and billing. Unpinned, the CLI uses its own default, which may cost more than your chat model. Use the same model as your chat window (`/model` inside `copilot` lists valid names). A wrong name fails at once at no cost. Try the pipeline on one small story first.
 
 ## Set up a project
 
-Run from this repo's folder (after `npm link` you can type `sdlc-orchestrator ...` anywhere). Omit `--repo` on `config set` for a global setting. You can also ask the chat agent to do any of this; it uses the same code.
+Setup is done only with the CLI; the chat agent can read the configuration but cannot change it. `sdlc-orchestrator` is the linked `node dist/cli/index.js`. Omit `--repo` on `config set` for a global setting.
 
 ```
 # register, list, unregister repos
-node dist/cli/index.js repos add D:/work/ProjectA
-node dist/cli/index.js repos list
-node dist/cli/index.js repos remove D:/work/ProjectA
+sdlc-orchestrator repos add D:/work/ProjectA
+sdlc-orchestrator repos list
+sdlc-orchestrator repos remove D:/work/ProjectA
 
 # what is configured now
-node dist/cli/index.js config show --repo D:/work/ProjectA
+sdlc-orchestrator config show --repo D:/work/ProjectA
 
 # which AI does the work (claude | copilot | cursor | a custom id) and with what model
-node dist/cli/index.js config set platform copilot --repo D:/work/ProjectA
-node dist/cli/index.js config set analysis_platform claude                 # read-only stages on another tool
-node dist/cli/index.js config set coding_platform copilot --repo D:/work/ProjectA
-node dist/cli/index.js model set gpt-6-luna --repo D:/work/ProjectA        # model for this repo (reset: model reset)
+sdlc-orchestrator config set platform copilot --repo D:/work/ProjectA
+sdlc-orchestrator config set analysis_platform claude                 # read-only stages on another tool
+sdlc-orchestrator config set coding_platform copilot --repo D:/work/ProjectA
+sdlc-orchestrator model set gpt-6-luna --repo D:/work/ProjectA        # model for this repo (reset: model reset)
 
 # how tests run
-node dist/cli/index.js config set test_command "dotnet test App.sln" --repo D:/work/ProjectA
+sdlc-orchestrator config set test_command "dotnet test App.sln" --repo D:/work/ProjectA
 
 # run several stories in parallel: each task codes in its own git worktree (off by default)
-node dist/cli/index.js config set worktree true --repo D:/work/ProjectA
-node dist/cli/index.js config set worktree_setup "npm ci" --repo D:/work/ProjectA   # run once in each new worktree
-node dist/cli/index.js config unset worktree --repo D:/work/ProjectA
+sdlc-orchestrator config set worktree true --repo D:/work/ProjectA
+sdlc-orchestrator config set worktree_setup "npm ci" --repo D:/work/ProjectA   # run once in each new worktree
+sdlc-orchestrator config unset worktree --repo D:/work/ProjectA
 
 # checks on coding sessions
-node dist/cli/index.js config set tests_first true --repo D:/work/ProjectA          # write and freeze failing tests first
-node dist/cli/index.js config set scope_check fail --repo D:/work/ProjectA          # off | warn (default) | fail
-node dist/cli/index.js config set scope_allow "package-lock.json,docs/**" --repo D:/work/ProjectA
+sdlc-orchestrator config set tests_first true --repo D:/work/ProjectA          # write and freeze failing tests first
+sdlc-orchestrator config set scope_check fail --repo D:/work/ProjectA          # off | warn (default) | fail
+sdlc-orchestrator config set scope_allow "package-lock.json,docs/**" --repo D:/work/ProjectA
 
 # branch names (default story/{key}; {key} = Jira key, else task id)
-node dist/cli/index.js branch set "feature/{key}" --repo D:/work/ProjectA
-node dist/cli/index.js branch show
+sdlc-orchestrator branch set "feature/{key}" --repo D:/work/ProjectA
+sdlc-orchestrator branch show
 ```
 
 Settings take effect on the next dispatch. Every setting and its meaning: [docs/configuration.md](docs/configuration.md) (worktrees, base branches, workspaces with several repos, independent review, routing).
@@ -112,9 +114,8 @@ A big story is split into parts you review before anything is created. A risky p
 **While you are away.** `autopilot` works the tasks of a repo unattended, takes only the decisions your policy allows (each one logged), parks the rest, and gives you a morning report. Code only ever lands on task branches.
 
 ```
-node dist/cli/index.js autopilot enable
-node dist/cli/index.js autopilot start --repo D:/work/ProjectA --hours 8
-node dist/cli/index.js autopilot report
+sdlc-orchestrator autopilot start --repo D:/work/ProjectA --hours 8
+sdlc-orchestrator autopilot report
 ```
 
 Details and limits: [docs/autonomous-mode.md](docs/autonomous-mode.md).
@@ -130,24 +131,24 @@ model     show | set <name> --repo p | reset --repo p
 branch    show | set <pattern> [--repo p] | reset [--repo p]
 tasks     list | show <task_id|JIRA-KEY|PR#> [--stage plan] | remove <task_id> [--yes] [--with-children]
 dispatches usage [--task id] [--days N] | prune [--days N] [--yes]
-autopilot enable | disable | start --repo p [--tasks a,b] [--hours N] [--max-dispatches N] | start --resume <run_id> | status | stop | report
+autopilot list | status | logs | enable | disable | start --repo p [--tasks a,b] [--hours N] [--max-dispatches N] | start --resume <run_id> | status | stop | report
 evals     check | run [--case name] [--platform p] [--model m] [--repeat N]
 knowledge claims | repair | check-module | freshness      (checks of knowledge pages against the code they cite)
 ```
 
-`node dist/cli/index.js --help` has the full text. Settings keys for `config set`: `platform`, `analysis_platform`, `coding_platform`, `review_platform`, `model`, `branch_pattern`, `test_command`, `tests_first`, `scope_check`, `scope_allow`, `redact_secrets`, `worktree`, `worktree_setup` (per repo, or global without `--repo`); `default_platform`, `dispatch_timeout_minutes`, `dispatch_retention_days`, `platforms.<id>.model` (global only).
+`sdlc-orchestrator --help` has the full text. Settings keys for `config set`: `platform`, `analysis_platform`, `coding_platform`, `review_platform`, `model`, `branch_pattern`, `test_command`, `tests_first`, `scope_check`, `scope_allow`, `redact_secrets`, `worktree`, `worktree_setup` (per repo, or global without `--repo`); `default_platform`, `dispatch_timeout_minutes`, `dispatch_retention_days`, `platforms.<id>.model`, `autopilot.platform`, `autopilot.agent`, `autopilot.command`, `autopilot.interval_seconds`, `autopilot.tick_timeout_minutes` (global only).
 
 What `install` writes (copilot-cli and cursor never modify the repo; `--repo` only updates the orchestrator's config):
 
 | Target | Agent file | MCP servers |
 |---|---|---|
-| `copilot-cli` | `~/.copilot/agents/orchestrator.agent.md` | `~/.copilot/mcp-config.json` |
-| `claude` | `~/.claude/agents/orchestrator.md` | prints `claude mcp add` commands to run |
-| `cursor` | `~/.cursor/agents/orchestrator-agent.md` | `~/.cursor/mcp.json` |
+| `copilot-cli` | `~/.copilot/agents/sdlc-orchestrator.agent.md` | `~/.copilot/mcp-config.json` |
+| `claude` | `~/.claude/agents/sdlc-orchestrator.md` | prints `claude mcp add` commands to run |
+| `cursor` | `~/.cursor/agents/sdlc-orchestrator.md` | `~/.cursor/mcp.json` |
 
 Existing MCP config files are merged and backed up as `.bak` (comments in them are not preserved). With `copilot-cli --repo`, the folder is added to Copilot CLI's `trustedFolders` so it can load that folder's `.mcp.json`; review a project's MCP server definitions before trusting it.
 
-**After pulling an update:** `npm run build`, then `node dist/cli/index.js install --target <tool>`, then open a new chat. An existing `policy.json` needs no edit: new fields have defaults.
+**After pulling an update:** `npm run build`, then `sdlc-orchestrator install --target <tool>`, then open a new chat. An existing `policy.json` needs no edit: new fields have defaults.
 
 ## Where things are stored
 
@@ -159,7 +160,7 @@ Everything is under `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`): 
 |---|---|
 | [docs/workflow.md](docs/workflow.md) | What happens to a story, step by step, and who does what |
 | [docs/configuration.md](docs/configuration.md) | Files, worktrees, base branches, branch names, workspaces, models, review, tests first, scope, wrong specs |
-| [docs/autonomous-mode.md](docs/autonomous-mode.md) | Unattended runs: what may be decided, what parks, the morning report |
+| [docs/autonomous-mode.md](docs/autonomous-mode.md) | Unattended runs: task-pack prompt template, what may be decided, what parks, the morning report |
 | [docs/working-with-the-agent.md](docs/working-with-the-agent.md) | Phrasing requests and keeping cost down |
 | [docs/security.md](docs/security.md) | Secret redaction, untrusted content, worker restrictions per platform |
 | [docs/cost-and-evals.md](docs/cost-and-evals.md) | Token use, task budgets, skill evals |

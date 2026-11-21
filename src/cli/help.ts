@@ -31,12 +31,14 @@ sdlc-orchestrator config remove-project <path>
 sdlc-orchestrator config set <key> <value> [--repo <path>]         without --repo: a global setting. Keys: platform, analysis_platform, coding_platform,
                                                                    review_platform, model, branch_pattern, test_command, tests_first, scope_check,
                                                                    scope_allow, redact_secrets, worktree, worktree_setup (repo); default_platform,
-                                                                   dispatch_timeout_minutes (global); platforms.<id>.model (global)
+                                                                   dispatch_timeout_minutes (global); platforms.<id>.model (global);
+                                                                   autopilot.platform|agent|command|interval_seconds|tick_timeout_minutes (global)
 sdlc-orchestrator config unset <key> [--repo <path>]               e.g. config set worktree true --repo D:/work/App
 sdlc-orchestrator dispatches usage [--task <id>] [--days N]        token use and cost of finished dispatches
 sdlc-orchestrator autopilot enable | disable                         turn unattended runs on or off (policy.autonomy.enabled)
 sdlc-orchestrator autopilot start --repo <path> [--tasks a,b] [--hours N] [--max-dispatches N] [--platform copilot|claude]
                                                                      work the repo's tasks unattended; decisions allowed by policy.autonomy are logged, the rest park
+sdlc-orchestrator autopilot list | status [--run id] | logs [--run id] [--tail N]   runs, progress and limits spent, the runner's output
 sdlc-orchestrator autopilot start --resume <run_id>                  carry on a run after a crash or reboot
 sdlc-orchestrator autopilot status | stop | report [--run <run_id>]  progress, stop, or the morning report
 sdlc-orchestrator evals check                                   offline check of the skill eval cases against their golden artifacts

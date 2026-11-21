@@ -43,7 +43,7 @@ export function buildInvocation(prompt: string, cfg: AutopilotConfig | undefined
     const withPrompt = (c.args ?? []).some((x) => x.includes("{prompt}"));
     return { command: c.command, args: (c.args ?? []).map((x) => x.replaceAll("{prompt}", prompt)), stdin: withPrompt ? undefined : prompt };
   }
-  const agent = c.agent ?? "orchestrator";
+  const agent = c.agent ?? "sdlc-orchestrator";
   const platform = platformFor(c.platform) ?? platformFor(defaultPlatform);
   if (platform === "copilot") {
     // deny rules win over --allow-all-tools: the orchestrator only calls its MCP tools and never needs files or a shell

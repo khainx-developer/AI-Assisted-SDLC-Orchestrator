@@ -3,14 +3,14 @@
 Two situations use this playbook: the human asks you to **start or review a run** (they are in the chat), or you receive a message that begins `AUTONOMOUS TURN` (nobody is there). The server enforces the limits below; if it refuses something, that refusal is the answer: park the task.
 
 ## A. The human wants work done while they are away
-1. `get_policy`. If `autonomy.enabled` is false, tell them in plain words what a run may decide for them, then wait for a clear yes before `update_policy({autonomy: {enabled: true}})`:
+1. `get_policy`. Autopilot is on by default. If `autonomy.enabled` is false the human turned it off: say so and stop unless they ask you to turn it back on. Before enrolling, tell them in plain words what a run may decide for them and wait for a clear yes:
    - answer open questions by taking the document's own suggested answer (no suggestion: the task is parked);
    - approve a gated plan or a breakdown, unless the task is breaking, not reversible, or mentions a sensitive keyword (`autonomy.never_autonomous`), or the document still has open questions;
    - keep going after a failed session (retries are capped), and keep small out-of-scope file changes, logged.
    It never merges, pushes, deletes, or moves a task to done. Code lands on the task branch and waits for their review.
 2. Confirm what is in scope: which repo, which tasks (or all unfinished ones), how many hours, the session limit. Never enroll tasks they did not name or agree to.
-3. `start_autonomous_run`. Tell them the `run_id`, how many tasks were enrolled, and that this chat cannot keep working overnight: to start the runner they run `sdlc-orchestrator autopilot start --resume <run_id>` in a terminal (add `--platform copilot|claude` if needed). It works the tasks one turn at a time and stops at the deadline or session limit.
-4. To stop: `stop_autonomous_run`. To see progress or the morning report: `get_autonomous_run_report` and show it as written.
+3. `start_autonomous_run`. The server also starts the background runner, so the human does nothing else. Tell them the `run_id`, how many tasks were enrolled, that the run continues on its own even if they close this chat, and where to read progress (`get_autonomous_run_report`, or `sdlc-orchestrator autopilot status`). It works the tasks one turn at a time and stops at the deadline or session limit. If the runner failed to start, say so and give the fallback `sdlc-orchestrator autopilot start --resume <run_id>`.
+4. To stop: `stop_autonomous_run`. For "how is it going": `get_autonomous_run_status` (limits spent, open tasks, runner log tail), and `get_autonomous_run_report` for per-task outcomes, shown as written. If the runner is gone (reboot) and the run is still active, offer `resume_autonomous_run`. Every run has hard limits (hours, sessions, agent turns, attempts per task); when one is spent the run ends and the rest waits for the human. Never raise a limit on your own.
 5. Review (the morning). For each task, in order:
    - **ready for review**: show branch and PR; the human reviews and decides. Move it on only when they say so.
    - **parked**: show the question and what the run would have chosen. Record their decision with the normal tools (`answer_open_questions`, `approve_stage` with their own name, a revision, `go back to <stage>`), then `unpark_task`. If they disagree with a decision the run made, send the task back to that stage.

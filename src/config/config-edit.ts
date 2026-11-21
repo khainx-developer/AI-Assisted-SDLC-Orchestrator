@@ -35,6 +35,15 @@ export const GLOBAL_ONLY_SETTINGS: Record<string, Spec> = {
   dispatch_retention_days: { kind: "number", help: "finished dispatch folders older than this are deleted at startup (0 keeps all)" },
 };
 
+/** `autopilot.<field>` settings (global only): how `sdlc-orchestrator autopilot` starts the agent. */
+export const AUTOPILOT_SETTINGS: Record<string, Spec> = {
+  platform: { kind: "platform", help: "copilot | claude: CLI that runs the orchestrator agent (default: default_platform)" },
+  agent: { kind: "string", help: "name of the installed orchestrator agent (default orchestrator)" },
+  command: { kind: "string", help: "another CLI to run instead of copilot/claude" },
+  interval_seconds: { kind: "number", help: "seconds between rounds (default 20)" },
+  tick_timeout_minutes: { kind: "number", help: "one agent turn is stopped after this many minutes (default 30)" },
+};
+
 const configFile = () => process.env.SDLC_CONFIG ?? join(dataDir(), "config.json");
 
 export function readRawConfig(): any {
@@ -128,11 +137,28 @@ export function updateSetting(root: string | undefined, key: string, value: unkn
     writeRawConfig(cfg);
     return { scope: "global", key, value: cfg.platforms[pm[1]]?.model ?? null, unset };
   }
+  // autopilot.<field>: how the unattended runner starts the orchestrator agent (global only)
+  const ap = /^autopilot\.(.+)$/.exec(key);
+  if (ap) {
+    const spec = AUTOPILOT_SETTINGS[ap[1]];
+    if (!spec) throw new Error(`'${key}' is not a setting. Settable: ${Object.keys(AUTOPILOT_SETTINGS).map((k) => `autopilot.${k}`).join(", ")}`);
+    if (root) throw new Error("autopilot.* settings are global; omit --repo");
+    cfg.autopilot = cfg.autopilot ?? {};
+    if (unset) delete cfg.autopilot[ap[1]];
+    else {
+      const v = coerce(key, spec, value, cfg);
+      if (ap[1] === "platform" && v !== "copilot" && v !== "claude") throw new Error(`${key}: expected copilot or claude (for another CLI set autopilot.command)`);
+      cfg.autopilot[ap[1]] = v;
+    }
+    if (!Object.keys(cfg.autopilot).length) delete cfg.autopilot;
+    writeRawConfig(cfg);
+    return { scope: "global", key, value: cfg.autopilot?.[ap[1]] ?? null, unset };
+  }
   if (root) {
     const spec = PROJECT_SETTINGS[key];
     if (!spec) throw new Error(`'${key}' cannot be set per repo. Settable: ${Object.keys(PROJECT_SETTINGS).join(", ")}`);
     const pk = projectKey(cfg, root);
-    if (!cfg.projects?.[pk]) throw new Error(`${pk} is not registered; add it first (add_project, or: sdlc-orchestrator repos add <path>)`);
+    if (!cfg.projects?.[pk]) throw new Error(`${pk} is not registered; add it first: sdlc-orchestrator repos add <path>`);
     if (unset) delete cfg.projects[pk][key];
     else cfg.projects[pk][key] = coerce(key, spec, value, cfg);
     writeRawConfig(cfg);
@@ -158,5 +184,6 @@ export function describeConfig(root?: string) {
   const platforms = Object.fromEntries(Object.entries<any>(cfg.platforms ?? {}).map(([id, p]) => [id, { model: p?.model ?? null, command: p?.command ?? null }]));
   const want = root ? projectKey(cfg, root) : undefined;
   const projects = Object.fromEntries(Object.entries<any>(cfg.projects ?? {}).filter(([k]) => !want || k === want));
-  return { global, platforms, projects, project_settings: Object.fromEntries(Object.entries(PROJECT_SETTINGS).map(([k, v]) => [k, v.help])) };
+  if (cfg.autopilot) global.autopilot = cfg.autopilot;
+  return { global, platforms, projects, autopilot_settings: Object.fromEntries(Object.entries(AUTOPILOT_SETTINGS).map(([k, v]) => [`autopilot.${k}`, v.help])), project_settings: Object.fromEntries(Object.entries(PROJECT_SETTINGS).map(([k, v]) => [k, v.help])) };
 }

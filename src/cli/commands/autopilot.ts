@@ -8,12 +8,15 @@ import { Workflow } from "../../workflow/service.js";
 import { buildInvocation, runTurn, tickPrompt } from "../../autopilot/agent.js";
 import { autopilotLoop } from "../../autopilot/loop.js";
 import { formatReport } from "../../autopilot/report.js";
+import { readRunnerLog } from "../../autopilot/runner-log.js";
 
 const USAGE = `usage: autopilot enable | disable                       turn policy.autonomy.enabled on or off
        autopilot start --repo <path> [--tasks id,id] [--hours N] [--max-dispatches N]
                        [--platform copilot|claude] [--interval S] [--tick-timeout MIN]
        autopilot start --resume <run_id>                 carry on a run (after a crash or reboot)
-       autopilot status [--run <run_id>]
+       autopilot list                                    recent runs
+       autopilot status [--run <run_id>]                 progress and the limits spent
+       autopilot logs [--run <run_id>] [--tail N]        the background runner's output
        autopilot stop --run <run_id>
        autopilot report [--run <run_id>]                 the morning report (default: the latest run)`;
 
@@ -34,10 +37,22 @@ export async function autopilotCommand(argv: string[]): Promise<void> {
   }
   const wf = new Workflow();
   if (sub === "report") { console.log(formatReport(wf.autonomy.report(latestRun(wf, oi("run"))))); return; }
+  if (sub === "list") {
+    const runs = wf.autonomy.listRuns(20);
+    if (!runs.length) console.log("no runs yet");
+    for (const r of runs) console.log(`${r.run_id} · ${r.status}${r.end_reason ? ` (${r.end_reason})` : ""} · ${r.project_root} · started ${r.started_at}`);
+    return;
+  }
+  if (sub === "logs") {
+    const id = latestRun(wf, oi("run"));
+    const l = readRunnerLog(id, oi("tail") ? Number(oi("tail")) : 40);
+    console.log(l.tail.length ? [`${l.path} (updated ${l.updated_at})`, ...l.tail].join("\n") : `no runner log for ${id} yet (${l.path})`);
+    return;
+  }
   if (sub === "status") {
     const id = latestRun(wf, oi("run"));
     const r = wf.autonomy.runnable(id);
-    console.log(`${r.run.run_id} · ${r.run.status}${r.run.end_reason ? ` (${r.run.end_reason})` : ""} · sessions ${r.budget.used}/${r.budget.max} · ${r.open} open task(s), ${r.tasks.length} ready now, ${r.waiting} waiting on running sessions`);
+    console.log(`${r.run.run_id} · ${r.run.status}${r.run.end_reason ? ` (${r.run.end_reason})` : ""} · sessions ${r.budget.used}/${r.budget.max} · agent turns ${r.budget.turns_used}/${r.budget.turns_max} · ends ${r.run.deadline ?? "never"} · ${r.open} open task(s), ${r.tasks.length} ready now, ${r.waiting} waiting on running sessions`);
     for (const t of r.tasks) console.log(`  ready: ${t.task_id} ${t.title} (${t.stage}; ${t.why})`);
     return;
   }

@@ -105,7 +105,9 @@ export class Autonomy {
     const root = normRoot(a.project_root);
     const run_id = `run_${randomUUID().slice(0, 8)}`;
     const started = now();
-    const deadline = a.hours ? new Date(Date.now() + a.hours * 3.6e6).toISOString() : null;
+    // every run has a deadline: never longer than policy.autonomy.max_hours_per_run, so an unattended run cannot go on forever
+    const hours = Math.min(a.hours ?? rules.max_hours_per_run, rules.max_hours_per_run);
+    const deadline = new Date(Date.now() + hours * 3.6e6).toISOString();
     this.db
       .prepare("INSERT INTO autonomy_runs (run_id,project_root,started_at,deadline,max_dispatches,status) VALUES (?,?,?,?,?,'active')")
       .run(run_id, root, started, deadline, a.max_dispatches ?? rules.max_dispatches_per_run);
@@ -116,7 +118,7 @@ export class Autonomy {
       this.enroll(t.task_id, run_id);
       enrolled.push(t.task_id);
     }
-    this.log(run_id, null, "run_started", `run started over ${root}: ${enrolled.length} task(s), ${deadline ? `until ${deadline}` : "no deadline"}`, { enrolled });
+    this.log(run_id, null, "run_started", `run started over ${root}: ${enrolled.length} task(s), until ${deadline}`, { enrolled });
     return { run: this.getRun(run_id), enrolled };
   }
 
@@ -144,11 +146,24 @@ export class Autonomy {
     this.log(run_id, task_id, "enrolled", `enrolled in ${run_id} at stage ${t.stage}`);
   }
 
-  /** Sessions this run has started so far against its budget. */
+  /** What this run has spent against its limits: worker sessions (dispatches) and orchestrator agent turns. */
   budget(run: RunRow) {
     const ids = (this.db.prepare("SELECT task_id FROM tasks WHERE run_id=?").all(run.run_id) as { task_id: string }[]).map((r) => r.task_id);
     const used = dispatchesSince(run.started_at, ids).length;
-    return { used, max: run.max_dispatches, exhausted: used >= run.max_dispatches };
+    const turns = (this.db.prepare("SELECT COUNT(*) AS n FROM autonomy_log WHERE run_id=? AND kind='tick'").get(run.run_id) as { n: number }).n;
+    const turns_max = this.rules.max_turns_per_run;
+    return { used, max: run.max_dispatches, turns_used: turns, turns_max, exhausted: used >= run.max_dispatches || turns >= turns_max };
+  }
+
+  /** Runs, newest first. */
+  listRuns(limit = 10): RunRow[] {
+    return this.db.prepare("SELECT * FROM autonomy_runs ORDER BY started_at DESC LIMIT ?").all(limit) as unknown as RunRow[];
+  }
+
+  /** One screen of progress for a run: state, limits spent, what is open. */
+  status(run_id: string) {
+    const r = this.runnable(run_id);
+    return { run: r.run, live: r.live, budget: r.budget, open_tasks: r.open, ready_now: r.tasks, waiting_on_sessions: r.waiting };
   }
 
   // ---- parking -----------------------------------------------------------------------------------------------------------------

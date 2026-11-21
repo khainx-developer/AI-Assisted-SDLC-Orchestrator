@@ -39,7 +39,7 @@ export async function autopilotLoop(o: LoopOptions): Promise<LoopResult> {
     const run = wf.autonomy.getRun(run_id);
     if (run.status !== "active") return "stopped";
     if (run.deadline && Date.parse(run.deadline) <= Date.now()) { wf.autonomy.finishRun(run_id, "deadline reached"); return "deadline"; }
-    if (wf.autonomy.budget(run).exhausted) { wf.autonomy.finishRun(run_id, "session budget spent"); return "budget"; }
+    if (wf.autonomy.budget(run).exhausted) { wf.autonomy.finishRun(run_id, "session or turn limit spent"); return "budget"; }
     return null;
   };
 

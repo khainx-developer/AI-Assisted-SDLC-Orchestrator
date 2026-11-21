@@ -1,18 +1,49 @@
 /** Unattended-run tools: start and stop a run, what to work on next, parking a task, deciding on a task's behalf within policy. */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { launchRunner, readRunnerLog } from "../../autopilot/runner-log.js";
 import { wf, run, tid } from "./shared.js";
 
 export function registerAutonomyTools(server: McpServer): void {
   server.tool(
     "start_autonomous_run",
-    "Begin an unattended run over a repo (only when the human asked for it, and policy.autonomy.enabled is true). Enrolls the given tasks, or every unfinished task of the repo. While the run is live, an enrolled task may be approved or have its open questions answered by you, only as far as the autonomous playbook and policy allow, each decision logged. Returns run_id, deadline and the enrolled task ids. Call get_playbook('autonomous') before working an enrolled task.",
+    "Begin an unattended run over a repo (only when the human asked for it, and policy.autonomy.enabled is true). Enrolls the given tasks, or every unfinished task of the repo. While the run is live, an enrolled task may be approved or have its open questions answered by you, only as far as the autonomous playbook and policy allow, each decision logged. Also starts the background runner that works the tasks (no terminal needed; `runner.log` is its output file). Returns run_id, deadline, the enrolled task ids and the runner pid. Call get_playbook('autonomous') before working an enrolled task.",
     {
       project_root: z.string(), task_ids: z.array(z.string()).optional().describe("limit the run to these tasks; omit to enroll every unfinished task of the repo"),
       hours: z.number().positive().optional().describe("the run ends after this many hours"),
       max_dispatches: z.number().int().min(1).optional().describe("AI sessions the run may start; default policy.autonomy.max_dispatches_per_run"),
     },
-    (a) => run(() => wf.autonomy.startRun(a))
+    (a) => run(() => {
+      const started = wf.autonomy.startRun(a);
+      // the runner is started here, so the human does not need a terminal
+      return { ...started, runner: launchRunner(started.run.run_id) };
+    })
+  );
+  server.tool(
+    "get_autonomous_run_status",
+    "Progress of an unattended run right now: live or ended (and why), sessions and agent turns spent against their limits, deadline, how many tasks are still open or waiting, and the last lines of the background runner's log. Omit run_id for the latest run. Use it when the human asks how a run is going; for the per-task outcome use get_autonomous_run_report.",
+    { run_id: z.string().optional(), log_lines: z.number().int().min(0).max(100).optional() },
+    (a) => run(() => {
+      const id = a.run_id ?? wf.autonomy.listRuns(1)[0]?.run_id;
+      if (!id) throw new Error("no runs yet");
+      return { ...wf.autonomy.status(id), runner_log: readRunnerLog(id, a.log_lines ?? 15) };
+    })
+  );
+  server.tool(
+    "list_autonomous_runs",
+    "Recent unattended runs, newest first, with their status and end reason.",
+    { limit: z.number().int().min(1).max(50).optional() },
+    (a) => run(() => wf.autonomy.listRuns(a.limit ?? 10))
+  );
+  server.tool(
+    "resume_autonomous_run",
+    "Start the background runner again for an active run whose runner is gone (after a reboot or crash). Only when the human asks. Does nothing for a run that has ended.",
+    { run_id: z.string() },
+    (a) => run(() => {
+      const r = wf.autonomy.getRun(a.run_id);
+      if (!wf.autonomy.isLive(r)) throw new Error(`run ${r.run_id} is not active (${r.status}${r.end_reason ? `: ${r.end_reason}` : ""})`);
+      return { run_id: r.run_id, runner: launchRunner(r.run_id) };
+    })
   );
   server.tool(
     "stop_autonomous_run",

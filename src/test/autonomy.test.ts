@@ -25,12 +25,12 @@ const on = () => updatePolicy({ autonomy: { enabled: true } });
 const off = () => updatePolicy({ autonomy: { enabled: false } });
 const root = (n: string) => `/repo-${n}`;
 
-test("autonomous mode is off by default, and a policy.json from before it existed still validates", () => {
-  assert.equal(loadPolicy().autonomy.enabled, false);
+test("autonomous mode is available by default, and a policy.json from before it existed still validates", () => {
+  assert.equal(loadPolicy().autonomy.enabled, true);
   const old: any = JSON.parse(JSON.stringify(loadPolicy()));
   delete old.autonomy;
   const p = PolicySchema.parse(old);
-  assert.equal(p.autonomy.enabled, false);
+  assert.equal(p.autonomy.enabled, true);
   assert.equal(p.autonomy.max_children, 6);
   assert.equal(p.autonomy.never_autonomous.breaking, true);
 });
@@ -61,6 +61,26 @@ test("a run enrolls the repo's unfinished tasks (or only the named ones) and chi
   const child = wf.createTask({ project_root: root("kids"), title: "child", source: "adhoc", flags: light, parent_task_id: parent.task_id });
   assert.equal(wf.getTask(child.task_id).autonomous, true);
   assert.equal(wf.getTask(child.task_id).run_id, r2.run.run_id);
+});
+
+test("a run always has a deadline, never past max_hours_per_run, and agent turns are capped", () => {
+  updatePolicy({ autonomy: { enabled: true, max_hours_per_run: 2, max_turns_per_run: 2 } });
+  const wf = new Workflow();
+  const t = wf.createTask({ project_root: root("limits"), title: "a", source: "adhoc", flags: light });
+  const hoursLeft = (r: { deadline: string | null }) => (Date.parse(r.deadline!) - Date.now()) / 3.6e6;
+  const none = wf.autonomy.startRun({ project_root: root("limits") }).run;
+  assert.ok(none.deadline && hoursLeft(none) <= 2.01, "no hours given: the policy cap applies");
+  const more = wf.autonomy.startRun({ project_root: root("limits"), hours: 50 }).run;
+  assert.ok(hoursLeft(more) <= 2.01, "asking for more than the cap is cut to the cap");
+  const less = wf.autonomy.startRun({ project_root: root("limits"), hours: 1 }).run;
+  assert.ok(hoursLeft(less) <= 1.01, "a shorter request is kept");
+
+  assert.equal(wf.autonomy.budget(less).exhausted, false);
+  wf.autonomy.logTick(less.run_id, t.task_id, "requirement");
+  wf.autonomy.logTick(less.run_id, t.task_id, "requirement");
+  const b = wf.autonomy.budget(less);
+  assert.deepEqual([b.turns_used, b.turns_max, b.exhausted], [2, 2, true]);
+  updatePolicy({ autonomy: { max_hours_per_run: 8, max_turns_per_run: 100 } });
 });
 
 test("children of an enrolled parent are capped by max_children", () => {
@@ -382,7 +402,7 @@ test("built-in agent invocations: copilot passes the prompt as an argument, clau
   const p = "one line";
   const cp = buildInvocation(p, undefined, "copilot");
   assert.equal(cp.command, "copilot");
-  assert.deepEqual(cp.args.slice(0, 4), ["--agent", "orchestrator", "-p", p]);
+  assert.deepEqual(cp.args.slice(0, 4), ["--agent", "sdlc-orchestrator", "-p", p]);
   assert.ok(cp.args.includes("--no-ask-user") && cp.args.join(" ").includes("--deny-tool write --deny-tool shell"));
   assert.equal(cp.stdin, undefined);
   const cl = buildInvocation(p, { agent: "boss" }, "claude");

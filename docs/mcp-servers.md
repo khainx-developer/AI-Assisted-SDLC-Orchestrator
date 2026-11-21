@@ -49,10 +49,8 @@ Starts worker sessions on any configured AI platform and reports results. Dispat
 | `cancel_dispatch` | Stops an in-flight dispatch (kills the CLI and its child processes) and records it as failed so the stage can be retried. Only after the human chooses it |
 | `get_usage` | Token use (and cost where the CLI reports it) of finished dispatches, in total and by kind, platform and task. `task_id` narrows it to one story. Estimated numbers are a lower bound. With `task_id` and `project_root` it also shows the task against its budget. All `dispatch_*` tools take `override_budget` (only after the human agrees) to continue past a `block` budget |
 | `list_projects` | Registered repos |
-| `get_config` | All settings, global and per project, and which ones can be changed |
-| `add_project`, `remove_project` | Register or unregister a repo (asks the human first) |
-| `update_config` | Set or unset one setting (`worktree`, `platform`, `model`, `test_command`, ...); same validation as `sdlc-orchestrator config set` |
-| `remove_worktree` | Delete a task's git worktree; refuses uncommitted work unless forced |
+| `get_config` | All settings, global and per project (read-only; changes are made with the `sdlc-orchestrator` CLI) |
+| `remove_worktree` | Delete a task's git worktree, and with `delete_branch` its branch; refuses uncommitted work unless forced |
 | `list_platforms` | Configured AI platforms and routing |
 
 ## Reused, not built

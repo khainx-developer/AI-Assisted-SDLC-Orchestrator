@@ -72,6 +72,22 @@ test("remove_worktree refuses uncommitted work unless forced; the branch stays",
   assert.ok(existsSync(await prepareWorkDir(repo, "story/w2", "T-w2")));
 });
 
+test("remove_worktree with delete_branch removes the folder and the merged branch", async () => {
+  const d = await prepareWorkDir(repo, "story/c1", "T-c1");
+  const r = await removeWorktree(repo, "T-c1", false, true);
+  assert.equal(r.branch_deleted, "story/c1");
+  assert.equal(existsSync(d), false);
+  assert.throws(() => git(repo, "rev-parse", "--verify", "refs/heads/story/c1"));
+});
+
+test("delete_branch refuses an unmerged branch unless forced", async () => {
+  const d = await prepareWorkDir(repo, "story/c2", "T-c2");
+  writeFileSync(join(d, "x.txt"), "x"); git(d, "add", "-A"); git(d, "commit", "-q", "-m", "x");
+  await assert.rejects(removeWorktree(repo, "T-c2", false, true), /not deleted/);
+  assert.equal(existsSync(d), false, "the worktree is gone, only the branch is left");
+  assert.equal((await removeWorktree(repo, "T-c2", true, true, "story/c2")).branch_deleted, "story/c2");
+});
+
 test("worktree_setup runs in a new worktree; a failing one is reported", async () => {
   setCfg({ worktree: true, worktree_setup: `node -e "require('fs').writeFileSync('setup.txt','1')"` });
   const d = await prepareWorkDir(repo, "story/s1", "T-s1");

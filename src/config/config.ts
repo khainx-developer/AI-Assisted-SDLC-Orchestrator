@@ -26,7 +26,7 @@ export interface PlatformOverride {
 export interface AutopilotConfig {
   /** copilot | claude: use that CLI's built-in invocation. Default: derived from default_platform. */
   platform?: string;
-  /** name of the installed orchestrator agent (default "orchestrator") */
+  /** name of the installed orchestrator agent (default "sdlc-orchestrator") */
   agent?: string;
   /** any other CLI: command plus args; {prompt} in args is replaced by the turn's instruction, and without it the instruction goes to stdin */
   command?: string;

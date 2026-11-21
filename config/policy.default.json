@@ -24,14 +24,16 @@
   "max_spec_wrong_returns": 2,
   "edge_case_review_after": 5,
   "autonomy": {
-    "enabled": false,
+    "enabled": true,
     "answer_questions": "accept_suggested",
     "plan_gate": "auto_approve",
     "breakdown": "auto_approve",
     "max_children": 6,
     "never_autonomous": { "breaking": true, "irreversible": true, "keywords": ["migration", "auth", "payment", "secret", "delete", "drop table"] },
     "max_attempts_per_task": 4,
-    "max_dispatches_per_run": 40
+    "max_dispatches_per_run": 40,
+    "max_turns_per_run": 100,
+    "max_hours_per_run": 8
   },
   "sync_jira_status": false,
   "jira_checkpoints": { "implementation": "In Progress", "review": "In Review", "done": "Done" }

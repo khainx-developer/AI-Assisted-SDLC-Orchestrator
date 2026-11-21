@@ -158,9 +158,9 @@ export function registerSessionTools(server: McpServer): void {
   );
   
   server.tool(
-    "remove_worktree", "Delete a task's git worktree (only exists when projects.<root>.worktree is true). The branch and its commits stay. Refuses while a session runs in it or when it has uncommitted work; pass force=true only if the human agreed to discard that work. Offer it once the task is merged or abandoned; do not call it unprompted.",
-    { task_id: z.string(), project_root: z.string(), force: z.boolean().optional() },
-    (a) => run(() => removeWorktree(a.project_root, a.task_id, a.force ?? false))
+    "remove_worktree", "Delete a task's git worktree (only exists when projects.<root>.worktree is true). By default the branch and its commits stay; with delete_branch=true the task branch is deleted too (refused if it is not merged unless force=true). Use delete_branch=true when the human says to close the task with its worktree: transition the task to done first, then call this. Refuses while a session runs in it or when it has uncommitted work; pass force=true only if the human agreed to discard that work. Offer it once the task is merged or abandoned; do not call it unprompted.",
+    { task_id: z.string(), project_root: z.string(), force: z.boolean().optional(), delete_branch: z.boolean().optional(), branch: z.string().optional().describe("branch to delete when the worktree is already gone; defaults to the worktree's branch") },
+    (a) => run(() => removeWorktree(a.project_root, a.task_id, a.force ?? false, a.delete_branch ?? false, a.branch))
   );
   
   server.tool(
