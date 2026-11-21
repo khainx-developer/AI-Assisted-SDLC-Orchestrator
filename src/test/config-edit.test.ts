@@ -12,8 +12,8 @@ process.env.SDLC_CONFIG = cfgPath;
 const repo = join(dir, "app");
 mkdirSync(repo);
 
-const { addProject, removeProject, updateSetting, describeConfig } = await import("../common/config-edit.js");
-const { worktreeSettings } = await import("../common/config.js");
+const { addProject, removeProject, updateSetting, describeConfig } = await import("../config/config-edit.js");
+const { worktreeSettings } = await import("../config/config.js");
 const saved = () => JSON.parse(readFileSync(cfgPath, "utf8"));
 
 test("add a project, turn worktree on and off, and loadConfig sees it at once", () => {

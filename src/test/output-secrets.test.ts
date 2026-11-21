@@ -31,7 +31,7 @@ execFileSync("git", ["init", "-q"], { cwd: repo });
 execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo });
 
 const { startAgentDispatch, getDispatch } = await import("../dispatch/runner.js");
-const { scanFilesForSecrets } = await import("../common/redact.js");
+const { scanFilesForSecrets } = await import("../config/redact.js");
 
 async function code(files: object, text: string, kind: "coding" | "analysis" = "coding") {
   writeFileSync(plan, JSON.stringify(files));

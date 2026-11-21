@@ -1,6 +1,6 @@
 # Project knowledge authoring
 
-Project knowledge is written collaboratively in chat. There is no repository scanner, repo-wide survey, or automated module-discovery workflow. Knowledge documents can be published one way, from the local store to Confluence, when the user explicitly starts a sync. Confluence is never read back into the local files.
+Project knowledge is written collaboratively in chat. There is no repository scanner or automated module-discovery: the user names what to document, as files or as folders. A named folder is read by a read-only worker (skill `module-analysis`, or `conventions`, `domain-rules`, `decision-mining`), one folder per worker; the orchestrator itself still never crawls the repo. Knowledge documents can be published one way, from the local store to Confluence, when the user explicitly starts a sync. Confluence is never read back into the local files.
 
 ## Authoring flow
 

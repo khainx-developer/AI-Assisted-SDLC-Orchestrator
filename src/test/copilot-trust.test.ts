@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { trustCopilotFolder } from "../common/copilot-trust.js";
+import { trustCopilotFolder } from "../dispatch/copilot-trust.js";
 
 test("trusts a folder once while preserving and backing up Copilot settings", () => {
   const home = mkdtempSync(join(tmpdir(), "sdlc-copilot-trust-"));

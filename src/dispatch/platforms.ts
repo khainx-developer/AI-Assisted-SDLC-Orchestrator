@@ -1,6 +1,6 @@
-import type { PlatformOverride } from "../common/config.js";
+import type { PlatformOverride } from "../config/config.js";
 import { dirname, join } from "node:path";
-import type { Restrictions, RestrictionsReport } from "../common/restrictions.js";
+import type { Restrictions, RestrictionsReport } from "../config/restrictions.js";
 
 /**
  * A platform adapter turns a platform-neutral request into one headless CLI invocation of that

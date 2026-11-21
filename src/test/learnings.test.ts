@@ -9,10 +9,10 @@ process.env.SDLC_DATA_DIR = dir;
 process.env.SDLC_CONFIG = join(dir, "config.json");
 writeFileSync(process.env.SDLC_CONFIG, JSON.stringify({ default_platform: "x", projects: { "D:/work/Named": { slug: "named" } } }));
 
-const L = await import("../common/learnings.js");
+const L = await import("../stores/learnings.js");
 const { repoInstructionsText } = await import("../dispatch/repo-instructions.js");
 const { analysisPrompt, codingPrompt } = await import("../dispatch/prompt.js");
-const { Workflow } = await import("../workflow-state/service.js");
+const { Workflow } = await import("../workflow/service.js");
 
 test("slug: config override wins; otherwise folder name plus path hash, stable across spellings", () => {
   assert.equal(L.slugFor("D:\\work\\Named\\"), "named");

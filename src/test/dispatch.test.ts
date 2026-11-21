@@ -138,7 +138,7 @@ test("extractArtifact: markers, fences and raw text", async () => {
 });
 
 test("projectConfig matches a repo regardless of slash and drive-letter spelling", async () => {
-  const { projectConfig } = await import("../common/config.js");
+  const { projectConfig } = await import("../config/config.js");
   writeFileSync(cfgPath, JSON.stringify({ default_platform: "fake", platforms: {}, projects: { "D:/work/Spell": { model: "m1" } } }));
   assert.equal(projectConfig("d:/work/Spell/")?.model, "m1");
   assert.equal(projectConfig("D:" + String.fromCharCode(92) + "work" + String.fromCharCode(92) + "Spell")?.model, "m1");
@@ -154,8 +154,8 @@ function writeCfgWorkspace(ws: string, behaviour: string) {
 }
 
 test("workspace: a child repo inherits the workspace's settings; coding/tests are refused at the non-git root", async () => {
-  const { projectConfig } = await import("../common/config.js");
-  const { projectRepos, requireGitRepo } = await import("../common/target.js");
+  const { projectConfig } = await import("../config/config.js");
+  const { projectRepos, requireGitRepo } = await import("../dispatch/target.js");
   const { detectTestCommand } = await import("../dispatch/runner.js");
   const ws = join(dir, "ws");
   const api = join(ws, "api"), web = join(ws, "web");
@@ -193,7 +193,7 @@ test("workspace: a child repo inherits the workspace's settings; coding/tests ar
 });
 
 test("workspace analysis at the root: a write inside any child repo is a read-only violation, reported relative to the root", async () => {
-  const { projectRepos } = await import("../common/target.js");
+  const { projectRepos } = await import("../dispatch/target.js");
   const ws = join(dir, "ws");
   writeCfgWorkspace(ws, "sneaky-child");
   const a = await startAgentDispatch({ kind: "analysis", task_id: "t", platformId: "fake", repos: projectRepos(ws), req: { projectRoot: ws, extraReadRoots: [], prompt: "READ-ONLY please" } });
@@ -212,7 +212,7 @@ test("repo instructions: children share one size budget, labelled by path under 
 });
 
 test("completedArtifact hands a finished analysis document to the workflow server, and refuses everything else", async () => {
-  const { completedArtifact } = await import("../common/dispatch-store.js");
+  const { completedArtifact } = await import("../stores/dispatch-store.js");
   writeCfg("none");
   const ok = await wait((await startAgentDispatch({ kind: "analysis", task_id: "t9", platformId: "fake", skill_version: "requirement-analysis@abc12345", req: { projectRoot: repo, extraReadRoots: [], prompt: "READ-ONLY please" } })).dispatch_id);
   const got = completedArtifact("t9", ok.dispatch_id);
@@ -281,7 +281,7 @@ test("test-first: test-authoring freezes the tests it wrote; stubs outside test_
   assert.equal(t.kind, "test-authoring");
   assert.deepEqual(t.frozen_files, ["tests/a.test.js"]);
   assert.deepEqual(t.scope_violation, ["stub.js"]);
-  const { frozenFilesFrom } = await import("../common/dispatch-store.js");
+  const { frozenFilesFrom } = await import("../stores/dispatch-store.js");
   assert.deepEqual(frozenFilesFrom("g", t.dispatch_id), ["tests/a.test.js"]);
   assert.throws(() => frozenFilesFrom("other", t.dispatch_id), /belongs to task/);
 });
@@ -292,7 +292,7 @@ test("test-first: a session that writes no tests fails visibly", async () => {
     req: { projectRoot: repo, extraReadRoots: [], prompt: "write the tests" } })).dispatch_id);
   assert.equal(t.status, "failed");
   assert.match(t.error!, /wrote no test files/);
-  const { frozenFilesFrom } = await import("../common/dispatch-store.js");
+  const { frozenFilesFrom } = await import("../stores/dispatch-store.js");
   assert.throws(() => frozenFilesFrom("g", t.dispatch_id), /is failed/);
 });
 
@@ -345,7 +345,7 @@ test("run_tests with expect_fail gives a verdict: red, broken or vacuous", async
 });
 
 test("repo settings: tests_first defaults off, scope_check defaults to warn, repo value wins over global", async () => {
-  const { repoSettings } = await import("../common/config.js");
+  const { repoSettings } = await import("../config/config.js");
   writeGuardCfg("none");
   assert.deepEqual(repoSettings(repo), { tests_first: false, scope_check: "warn", scope_allow: [], test_command: null });
   writeGuardCfg("none", { tests_first: true, scope_check: "fail", scope_allow: ["a"], projects: { [repo]: { tests_first: false, scope_check: "off", scope_allow: ["b"], test_command: "npm t" } } });
@@ -375,7 +375,7 @@ test("cancel_dispatch kills a hung session, records why, and the stage can be re
 });
 
 test("pruneDispatches removes only old finished dispatches; dry run deletes nothing; in-flight are kept", async () => {
-  const { pruneDispatches, dispatchDir, metaFile } = await import("../common/dispatch-store.js");
+  const { pruneDispatches, dispatchDir, metaFile } = await import("../stores/dispatch-store.js");
   const mk = (id: string, status: string, finishedDaysAgo?: number) => {
     mkdirSync(dispatchDir(id), { recursive: true });
     const finished_at = finishedDaysAgo === undefined ? undefined : new Date(Date.now() - finishedDaysAgo * 86_400_000).toISOString();

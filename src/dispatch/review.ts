@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { loadConfig, projectConfig } from "../common/config.js";
-import { latestDispatch } from "../common/dispatch-store.js";
+import { loadConfig, projectConfig } from "../config/config.js";
+import { latestDispatch } from "../stores/dispatch-store.js";
 
 const execFileP = promisify(execFile);
 

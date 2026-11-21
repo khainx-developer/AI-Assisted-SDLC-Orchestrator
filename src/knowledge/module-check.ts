@@ -65,7 +65,7 @@ export function checkModule(repoRoot: string, md: string, expectedSha?: string):
     const label = line.replace(/^\s*[-*]\s+/, "").slice(0, 90);
     // a plain path citation (`path` with no line) also counts as evidence, for project files and folders
     const hasPathCite = [...line.matchAll(/`([^`\s]+[\\/][^`\s]*|[^`\s]+\.(?:csproj|json|yml|yaml|md|config))`/g)].length > 0;
-    if (!cites.length && !hasPathCite) { uncited.push(label); continue; }
+    if (!cites.length && !hasPathCite) { if (!/not (?:established|found)/i.test(line)) uncited.push(label); continue; } // a statement that something was not found has nothing to cite
     const bodies = cites.map((c) => read(slash(c[1]))).filter((t): t is string => t !== null);
     if (!bodies.length) continue;
     const all = bodies.join("\n") + "\n" + cites.map((c) => slash(c[1])).join("\n"); // a cited file's own path names it too
@@ -80,7 +80,8 @@ export function checkModule(repoRoot: string, md: string, expectedSha?: string):
   }
 
   const headings = new Set([...md.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]));
-  const missingSections = SECTIONS.filter((s) => !headings.has(s));
+  const type = md.match(/^Type:\s*(\S+)/m)?.[1]; // only module pages follow the module template; other page types have their own headings
+  const missingSections = type && type !== "module" ? [] : SECTIONS.filter((s) => !headings.has(s));
   const src = md.match(/^Source:\s*(.+)$/m)?.[1] ?? "";
   const wrong = expectedSha && !src.includes(expectedSha.slice(0, 7)) ? `Source line is "${src}", expected commit ${expectedSha.slice(0, 7)}` : null;
 

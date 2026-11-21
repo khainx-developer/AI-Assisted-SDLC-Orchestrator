@@ -26,7 +26,7 @@ mkdirSync(repo);
 execFileSync("git", ["init", "-q"], { cwd: repo });
 execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo });
 
-const { redactSecrets } = await import("../common/redact.js");
+const { redactSecrets } = await import("../config/redact.js");
 const { startAgentDispatch, getDispatch } = await import("../dispatch/runner.js");
 const { analysisPrompt, codingPrompt, testAuthoringPrompt, loadSkill, bundledSkillsDir } = await import("../dispatch/prompt.js");
 

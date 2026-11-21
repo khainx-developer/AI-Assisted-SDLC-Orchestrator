@@ -28,12 +28,45 @@ flowchart LR
 | Part | Role | Where |
 |---|---|---|
 | **Orchestrator agent** | The chat you talk to. Triages, picks the next step, asks you for decisions. Never edits files and never does deep analysis. | [orchestrator-agent/SYSTEM_PROMPT.md](../orchestrator-agent/SYSTEM_PROMPT.md), [skills/](../orchestrator-agent/skills/) |
-| **`workflow-state` server** | The single source of truth: tasks, stages, approvals, stage documents, learnings. Enforces the rules (a gate cannot be skipped). | [src/workflow-state/](../src/workflow-state/) |
-| **`dispatch` server** | Starts the worker AI CLI, watches it, checks what it did, returns the result. | [src/dispatch/](../src/dispatch/) |
+| **`workflow-state` server** | The single source of truth: tasks, stages, approvals, stage documents, learnings. Enforces the rules (a gate cannot be skipped). | rules in [src/workflow/](../src/workflow/), tools in [src/mcp/workflow/](../src/mcp/workflow/) |
+| **`dispatch` server** | Starts the worker AI CLI, watches it, checks what it did, returns the result. | engine in [src/dispatch/](../src/dispatch/), tools in [src/mcp/dispatch/](../src/mcp/dispatch/) |
+| **Autopilot** | Optional runner for unattended work: gives the orchestrator agent one turn per task, one task at a time, within the rules of [autonomous mode](autonomous-mode.md). | [src/autopilot/](../src/autopilot/) |
 | **Worker sessions** | Separate AI CLI processes (Copilot, Claude, Cursor or custom), one per stage. They do the reading, the writing and the coding. | the CLI you installed |
 | **Jira and GitHub servers** | Existing MCP servers, reused: read tickets, find PRs. Optional. | not built here |
 
 The chat tool you host the orchestrator in and the AI that does the dispatched work are **independent choices**: you can talk to it in Copilot CLI while analysis runs on Claude and coding on Cursor.
+
+## Code layers
+
+The source is organised in four layers. A module imports only from its own layer or one below it; the layers are folders under [src/](../src/).
+
+```
+  Interfaces     mcp/workflow   mcp/dispatch   cli           the only code that talks to the outside
+                      |              |           |           (stdio MCP, argv); no rules live here
+  ---------------------------------------------------------
+  Domains        workflow    dispatch    knowledge    autopilot    evals
+                 stages,     sessions,   pages,       unattended   skill
+                 gates,      guards,     freshness,   runs         cases
+                 autonomy    prompts     claims
+  ---------------------------------------------------------
+  Stores and     stores/ dispatch records, usage, budget, learnings, playbooks
+  settings       config/ config.json, edits to it, restrictions, secret redaction
+  ---------------------------------------------------------
+  Shared         shared/ paths, JSONC (no knowledge of the project)
+```
+
+| Layer | Folder | What belongs there |
+|---|---|---|
+| Interfaces | [mcp/workflow/](../src/mcp/workflow/), [mcp/dispatch/](../src/mcp/dispatch/) | Tool names, argument schemas and descriptions, each file one group (`task-tools`, `document-tools`, `gate-tools`, `memory-tools`, `autonomy-tools`; `session-tools`, `knowledge-tools`, `config-tools`). A tool body is one call into a domain. `server.ts` only wires the groups and connects the transport. |
+| | [cli/](../src/cli/) | `index.ts` routes `argv`; each command group is a file in `commands/`. |
+| Domains | [workflow/](../src/workflow/) | The workflow rules: `service.ts` (tasks, transitions, approvals, artifacts), `policy.ts`, `schema.ts`, `questions.ts`, `autonomy.ts` (unattended-run rules). The server is authoritative: a rule is enforced here, not in the prompt. |
+| | [dispatch/](../src/dispatch/) | The execution engine: `platforms.ts` (one adapter per AI CLI), `runner.ts`, `process.ts` (find and kill a CLI process), `guards.ts` (checks after a session), `prompt.ts`, `checkout.ts` (branches and worktrees), `review.ts`. |
+| | [knowledge/](../src/knowledge/) | Project knowledge pages and their checks. |
+| | [autopilot/](../src/autopilot/) | `loop.ts` (the unattended-run loop), `agent.ts` (start the orchestrator agent for one turn), `report.ts`. |
+| Stores and settings | [stores/](../src/stores/), [config/](../src/config/) | Reading and writing files the other layers share. No workflow rules. |
+| Shared | [shared/](../src/shared/) | Helpers with no domain knowledge. |
+
+Where a change goes: a new tool is a file in `mcp/` plus a method in a domain; a new rule is in a domain and is then reachable from the tool, the CLI and the tests alike; a new AI platform is one entry in `dispatch/platforms.ts` (and its id in `config/builtin-platforms.ts`).
 
 ## Why two servers, and why a database
 

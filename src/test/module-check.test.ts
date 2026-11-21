@@ -83,3 +83,23 @@ test("missing sections and a source commit that differs are reported", () => {
 test("a page with no citations at all is not ok", () => {
   assert.equal(checkModule(repo, "# Module: x\n\nnothing\n").ok, false);
 });
+
+test("non-module pages are not held to the module headings, and 'not found' statements need no citation", () => {
+  const md = `# Domain rules: X
+
+Source: repo@abc1234def
+Type: domain-rules
+Summary: s
+Applies to: Svc/
+Status: draft
+
+## Rules
+- Runs jobs. \`Svc/Worker.cs:1-3\`
+`;
+  assert.deepEqual(checkModule(repo, md).missing_sections, []);
+  assert.ok(checkModule(repo, md).ok);
+  const mod = md.replace("Type: domain-rules", "Type: module");
+  assert.ok(checkModule(repo, mod).missing_sections.length > 0);
+  const nf = `# Module: Svc\n\nSource: repo@abc1234def\nType: module\n\n## Build and test\n- Dedicated tests are not established by these sources.\n`;
+  assert.deepEqual(checkModule(repo, nf).uncited, []);
+});

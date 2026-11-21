@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.SDLC_DATA_DIR = mkdtempSync(join(tmpdir(), "sdlc-"));
-const { Workflow } = await import("../workflow-state/service.js");
-const { updatePolicy } = await import("../workflow-state/policy.js");
+const { Workflow } = await import("../workflow/service.js");
+const { updatePolicy } = await import("../workflow/policy.js");
 
 const light = { files_affected: 1, reversible: true, breaking: false, has_precedent: true, requirement_clarity: "high" as const };
 const risky = { ...light, breaking: true };
@@ -242,7 +242,7 @@ test("report_spec_wrong works from test, and for a light task with no earlier do
 });
 
 test("a policy.json written before spec_wrong settings existed still validates and gets the defaults", async () => {
-  const { PolicySchema } = await import("../workflow-state/policy.js");
+  const { PolicySchema } = await import("../workflow/policy.js");
   const { readFileSync } = await import("node:fs");
   const old = JSON.parse(readFileSync(new URL("../../config/policy.default.json", import.meta.url), "utf8"));
   delete old.spec_wrong_return_to; delete old.max_spec_wrong_returns;

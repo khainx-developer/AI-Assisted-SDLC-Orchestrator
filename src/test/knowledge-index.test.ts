@@ -11,7 +11,7 @@ process.env.SDLC_CONFIG = join(dataRoot, "config.json");
 const { writeKnowledgeDocument } = await import("../knowledge/storage.js");
 const { knowledgeIndex } = await import("../knowledge/index-block.js");
 const { analysisPrompt, codingPrompt, testAuthoringPrompt } = await import("../dispatch/prompt.js");
-const { knowledgeInPrompts } = await import("../common/config.js");
+const { knowledgeInPrompts } = await import("../config/config.js");
 
 const repo = join(dataRoot, "shop");
 mkdirSync(repo, { recursive: true });

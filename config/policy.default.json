@@ -23,6 +23,16 @@
   "spec_wrong_return_to": ["requirement", "design", "plan"],
   "max_spec_wrong_returns": 2,
   "edge_case_review_after": 5,
+  "autonomy": {
+    "enabled": false,
+    "answer_questions": "accept_suggested",
+    "plan_gate": "auto_approve",
+    "breakdown": "auto_approve",
+    "max_children": 6,
+    "never_autonomous": { "breaking": true, "irreversible": true, "keywords": ["migration", "auth", "payment", "secret", "delete", "drop table"] },
+    "max_attempts_per_task": 4,
+    "max_dispatches_per_run": 40
+  },
   "sync_jira_status": false,
   "jira_checkpoints": { "implementation": "In Progress", "review": "In Review", "done": "Done" }
 }

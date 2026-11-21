@@ -13,8 +13,8 @@ writeFileSync(process.env.SDLC_CONFIG, JSON.stringify({
   projects: { "/work/api": { slug: "api" } },
 }));
 
-const { loadPolicy, updatePolicy, policyPath } = await import("../workflow-state/policy.js");
-const { writeLearning, readLearnings } = await import("../common/learnings.js");
+const { loadPolicy, updatePolicy, policyPath } = await import("../workflow/policy.js");
+const { writeLearning, readLearnings } = await import("../stores/learnings.js");
 
 test("with shared_dir set, policy.json and learnings live there and nothing lands in the private data folder", () => {
   assert.equal(policyPath(), join(shared, "policy.json"));

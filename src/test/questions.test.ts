@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.SDLC_DATA_DIR = mkdtempSync(join(tmpdir(), "sdlc-q-"));
-const { parseOpenQuestions, applyAnswers, renderGuidance } = await import("../workflow-state/questions.js");
-const { Workflow } = await import("../workflow-state/service.js");
+const { parseOpenQuestions, applyAnswers, renderGuidance } = await import("../workflow/questions.js");
+const { Workflow } = await import("../workflow/service.js");
 
 const NEW_DOC = `# Requirement: demo
 
@@ -120,7 +120,7 @@ test("service: get_open_questions / answer_open_questions round trip makes a new
   assert.match(wf.getArtifact(t.task_id, "requirement", 1).content, /Q1\.\*\* Should tool messages/, "v1 keeps the original questions");
 });
 
-const { addOpenQuestion } = await import("../workflow-state/questions.js");
+const { addOpenQuestion } = await import("../workflow/questions.js");
 
 test("addOpenQuestion: continues the numbering past decided questions, keeps the existing ones, and creates the section if missing", () => {
   const decided = "# Plan\n\n## Decisions\n- **Q1.** old → yes *(decided by the user)*\n- **Q2.** older → no *(decided by the user)*\n\n## Open Questions\nNone.\n";

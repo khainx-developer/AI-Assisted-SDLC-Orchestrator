@@ -6,7 +6,7 @@ Work not done yet, most valuable first. Items come from the community research o
 
 From the workflow review of 2026-11-18, most valuable first. Research sources were mostly blogs and preprints, so treat the figures as indicative.
 
-1. **Run all evals live and verify the Claude adapter.** Run the six unrun cases and `evals run --repeat 3`, and try the Claude Code adapter against the real CLI (also covers the restricted-workers check under Done recently). Unblocks every skill change below, because without it an improvement cannot be told from noise. Check the current headless/SDK billing policy first (one source claimed a change in mid-2026; unconfirmed).
+1. **Run all evals live and verify the Claude adapter.** Run the six unrun cases and `evals run --repeat 3`, and try the Claude Code adapter against the real CLI (and the Claude Code form of `autopilot`'s agent turn, `src/autopilot/agent.ts`, which only the Copilot form has been checked against; run one task with `autopilot start --hours 1` first) (also covers the restricted-workers check under Done recently). Unblocks every skill change below, because without it an improvement cannot be told from noise. Check the current headless/SDK billing policy first (one source claimed a change in mid-2026; unconfirmed).
 2. **Better independent review.** Research reports frontier models catching only about 15-31% of issues human reviewers flag on a diff alone. Give the reviewer the acceptance criteria as a checklist and let it read callers and tests around the diff. Add a deterministic pass first (lint, typecheck, test coverage of the changed lines). Track how often a human overrules the review; if it approves every time, revisit (see architecture.md decisions).
 3. **Compute triage flags from the repo.** `files_affected` and `has_precedent` are estimated from ticket text and drive the heavy/light split. Add a small read-only dispatch at task creation that computes them, and use the data to check the split.
 4. **Close the review loop.** When review finds problems, send them back to implementation automatically within the retry cap, instead of a human relaying them.
@@ -49,5 +49,5 @@ From the workflow review of 2026-11-18, most valuable first. Research sources we
 
 - Nothing from the budget, independent review, edge-case prompt, eval depth and team-sharing work is committed. Suggested commits: budget; review plus evals; edge-case prompt plus team sharing.
 - Run the other six eval cases live, including `review-clean`, and `evals run --repeat 3` once to see real flakiness. Only `requirement-retry` and `review-seeded-bug` have run live.
-- Re-run `node dist/cli.js install --target <tool>` and reload after pulling, so the orchestrator picks up the new prompt lines (independent review, review prompt).
+- Re-run `node dist/cli/index.js install --target <tool>` and reload after pulling, so the orchestrator picks up the new prompt lines (independent review, review prompt).
 - `shared_dir` was tested with the fake CLI only. Try it with two real clones before telling a team to rely on it.
