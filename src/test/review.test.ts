@@ -24,7 +24,7 @@ writeFileSync(join(repo, "mailer.test.js"), "// test\n");
 g("add", "-A"); g("commit", "-q", "-m", "retry");
 
 const { branchDiff, detectBase, reviewInstructions, chooseReviewer, MAX_DIFF_CHARS } = await import("../dispatch/review.js");
-const { dispatchDir, metaFile, latestDispatch } = await import("../common/dispatch-store.js");
+const { dispatchDir, metaFile, latestDispatch } = await import("../stores/dispatch-store.js");
 const { loadSkill } = await import("../dispatch/prompt.js");
 
 const seedCoding = (id: string, task: string, platform: string, model: string | undefined, finished: string) => {

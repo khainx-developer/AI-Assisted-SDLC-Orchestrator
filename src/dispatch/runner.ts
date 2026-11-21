@@ -3,13 +3,14 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, extname, dirname, relative } from "node:path";
-import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../common/dispatch-store.js";
-import { loadConfig, projectConfig, repoSettings, redactSettings } from "../common/config.js";
-import { budgetStatus } from "../common/budget.js";
-import { redactForRepo, scanFilesForSecrets } from "../common/redact.js";
-import { restrictionsFor } from "../common/restrictions.js";
-import { dispatchUsage } from "../common/usage.js";
-import { trustCopilotFolder } from "../common/copilot-trust.js";
+import { dispatchDir, metaFile, readDispatchMeta, type DispatchMeta } from "../stores/dispatch-store.js";
+import { loadConfig, projectConfig, repoSettings, redactSettings } from "../config/config.js";
+import { budgetStatus } from "../stores/budget.js";
+import { redactForRepo, scanFilesForSecrets } from "../config/redact.js";
+import { restrictionsFor } from "../config/restrictions.js";
+import { dispatchUsage } from "../stores/usage.js";
+import { trustCopilotFolder } from "./copilot-trust.js";
+import { resolveExe, killTree } from "./process.js";
 import { promptAccessRequest, resolvePlatform, type DispatchRequest } from "./platforms.js";
 import { parseCodingResult, extractArtifact } from "./prompt.js";
 import { porcelainPath, pathAllowed, outsideScope, hashFiles, touchedSince, snapshotFrozen, frozenViolations, classifyTestRun } from "./guards.js";
@@ -68,26 +69,6 @@ export async function ensureBranch(cwd: string, branch: string, base?: string | 
   if (exists) await git(cwd, "checkout", branch);
   else if (base) await git(cwd, "checkout", "-b", branch, await resolveBase(cwd, base));
   else await git(cwd, "checkout", "-b", branch);
-}
-
-/**
- * Windows: pick something we can spawn reliably. VS Code puts a "copilot-shim" on PATH that refuses
- * multi-line arguments and cannot launch npm's copilot.cmd ("UnsupportedWindowsCommandValue"),
- * so for copilot we go straight to the native binary the npm package ships.
- */
-function resolveExe(cmd: string): string {
-  if (process.platform !== "win32" || extname(cmd)) return cmd;
-  let hits: string[] = [];
-  try { hits = execFileSync("where", [cmd], { encoding: "utf8" }).split(/\r?\n/).map((l) => l.trim()).filter(Boolean); } catch { return cmd; }
-  if (cmd === "copilot") {
-    const arch = process.arch === "arm64" ? "arm64" : "x64";
-    for (const h of hits.filter((l) => /\.cmd$/i.test(l))) {
-      const native = join(dirname(h), "node_modules", "@github", "copilot", "node_modules", "@github", `copilot-win32-${arch}`, "copilot.exe");
-      if (existsSync(native)) return native;
-    }
-  }
-  const real = hits.filter((l) => !/copilot-shim/i.test(l));
-  return real.find((l) => /\.exe$/i.test(l)) ?? real[0] ?? hits[0] ?? cmd;
 }
 
 interface StartArgs {
@@ -282,15 +263,6 @@ export function startTestDispatch(task_id: string, root: string, command: string
 
 /** sessions started by this server process; lets cancel set the reason before the close handler records the failure */
 const running = new Map<string, { meta: DispatchMeta; pid?: number }>();
-
-/** Kill the CLI and everything it spawned. child.kill() alone leaves grandchildren running on Windows (cmd shims, node wrappers). */
-function killTree(pid?: number) {
-  if (!pid) return;
-  try {
-    if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
-    else process.kill(pid, "SIGKILL");
-  } catch { /* already gone */ }
-}
 
 /** Stop an in-flight dispatch and record it as failed ("cancelled") so the task can be retried. Works after a server restart too (kills by pid). */
 export function cancelDispatch(id: string, reason = "cancelled by user"): DispatchMeta {

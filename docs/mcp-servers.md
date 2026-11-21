@@ -1,10 +1,10 @@
 # MCP servers
 
-Four MCP servers are used. Two are built in this repo, two are reused. The installer (`node dist/cli.js install ...`) registers all four; see [clients/README.md](../clients/README.md) for manual registration.
+Four MCP servers are used. Two are built in this repo, two are reused. The installer (`node dist/cli/index.js install ...`) registers all four; see [clients/README.md](../clients/README.md) for manual registration.
 
 ## Built here
 
-### `workflow-state` ([src/workflow-state/server.ts](../src/workflow-state/server.ts))
+### `workflow-state` ([src/mcp/workflow/](../src/mcp/workflow/))
 
 State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `policy.json` and `learnings/`.
 
@@ -21,8 +21,9 @@ State, policy, artifacts and learnings. Storage is SQLite (`workflow.db`) plus `
 | Dispatch bookkeeping | `set_dispatch_status`, `check_file_overlap` (also says whether the other story has the same `base_branch`), `update_linked_refs`, `set_task_base` |
 | Spec proven wrong | `report_spec_wrong` (sends a task back to plan / design / requirement with the issue as an open question) |
 | Learnings | `read_learnings`, `write_learning`, `remove_learning` (see [learnings.md](learnings.md)) |
+| Unattended runs | `start_autonomous_run`, `stop_autonomous_run`, `list_runnable_tasks`, `autonomous_answer_open_questions`, `park_task`, `unpark_task`, `mark_ready_for_review`, `get_autonomous_run_report`; `approve_stage` also accepts an `autonomous:<run_id>` approver, which the server checks against `policy.autonomy` (see [autonomous-mode.md](autonomous-mode.md)) |
 
-### `dispatch` ([src/dispatch/server.ts](../src/dispatch/server.ts))
+### `dispatch` ([src/mcp/dispatch/](../src/mcp/dispatch/))
 
 Starts worker sessions on any configured AI platform and reports results. Dispatches are always asynchronous: a `dispatch_*` call returns a `dispatch_id` and `get_dispatch_result` is how the outcome comes back. How a session runs and what is checked afterwards: [architecture.md](architecture.md).
 
@@ -65,4 +66,4 @@ Installer flags: `--no-integrations` skips these two; `--jira-server` and `--git
 
 ## Not MCP: worker platforms
 
-Dispatched work runs through the Claude, Copilot or Cursor CLI, or a custom command declared in `config.json`. These are execution platforms, not MCP servers. How platforms are chosen and configured: [README: Configuration](../README.md#configuration).
+Dispatched work runs through the Claude, Copilot or Cursor CLI, or a custom command declared in `config.json`. These are execution platforms, not MCP servers. How platforms are chosen and configured: [Configuration](configuration.md).

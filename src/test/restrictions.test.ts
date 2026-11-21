@@ -17,7 +17,7 @@ const writeCfg = (o: object) => writeFileSync(cfgPath, JSON.stringify(o));
 process.env.SDLC_CONFIG = cfgPath;
 writeCfg({});
 
-const { restrictionsFor, DEFAULT_DENY_READ, DEFAULT_DENY_COMMANDS } = await import("../common/restrictions.js");
+const { restrictionsFor, DEFAULT_DENY_READ, DEFAULT_DENY_COMMANDS } = await import("../config/restrictions.js");
 const { PLATFORMS } = await import("../dispatch/platforms.js");
 
 const base = { prompt: "p", promptFile: join(dir, "d_00000000", "prompt.md"), projectRoot: repo, extraReadRoots: [] as string[] };

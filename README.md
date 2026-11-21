@@ -1,19 +1,6 @@
 # AI-Assisted SDLC Orchestrator
 
-Turn a Jira ticket or a plain description into reviewed, tested code, with an AI that **manages the process** and separate AI sessions that **do the work**. You chat with an orchestrator agent in GitHub Copilot CLI, Claude Code or Cursor. It decides how much process a story needs, drives it through **requirement → design → plan → implementation → test → review**, stops for your approval on risky plans, and remembers where everything stands.
-
-## Why use it
-
-One long AI chat that plans, designs and codes runs out of context and forgets the rules. Here the work is split, which gives you:
-
-- **Fresh context every time, so fewer tokens.** Each worker session is a new one-shot CLI process. It never continues an earlier chat. It starts with only the stage skill, the team's learnings, the repo's own instruction files and the instructions for that step. Stage-to-stage hand-off goes through Markdown documents, not chat history, so cost per step does not grow as a story gets longer.
-- **A small orchestrator and a chat you can throw away.** The orchestrator only decides what happens next; it never edits code or does deep analysis. All state (tasks, stages, approvals, documents) lives in the `workflow-state` server and its database, so you can open a new chat whenever the old one gets long and say `continue 2` or `resume PROJ-123`. Nothing is lost.
-- **Rules that cannot be talked around.** Gates, read-only analysis, frozen tests and the scope check are enforced by the servers, not requested in a prompt. The server checks what each worker did.
-- **You stay in control.** You answer open questions, confirm each document, and approve risky plans. Every reply ends with numbered options.
-- **Right-sized process.** Small, reversible changes skip straight to coding; only risky or vague stories pay for requirement, design and plan.
-- **Documents you can read and edit.** Every stage produces a versioned Markdown file. Your edits are what the next stage reads.
-- **One setup, any AI.** The same skills run on Copilot CLI, Claude Code, Cursor or a custom command, and the chat and the workers can use different platforms and models. A cheaper model can do the worker steps.
-- **Safe by default.** Nothing is written into your repos, and coding only happens on its own branch, never `main`.
+Turn a Jira ticket or a plain description into reviewed, tested code, with an AI that **manages the process** and separate AI sessions that **do the work**. You chat with an orchestrator agent in GitHub Copilot CLI, Claude Code or Cursor. It decides how much process a story needs, drives it through **requirement → design → plan → implementation → test → review**, stops for your approval on risky plans, and remembers where everything stands. It can also work through a queue of tasks while you are away ([autonomous mode](docs/autonomous-mode.md)).
 
 ## How it works
 
@@ -36,422 +23,163 @@ flowchart LR
     T -.->|"big story"| BD["Split into parts<br/>you review"] -.-> R
 ```
 
-1. **Triage.** The orchestrator rates the story on five flags. Small, reversible changes go straight to implementation; breaking, irreversible or vague ones go through requirement, design and plan.
-2. **Analysis stages** run as read-only worker sessions. Each produces a Markdown document you read, correct and confirm. Revisions are new versions.
-3. **Big stories are split** into separate tasks that you review before anything is created.
-4. **A risky plan stops at an approval gate.** Implementation is refused until you approve.
-5. **Implementation** is a coding session on its own `story/<id>` branch, never `main`. Optionally, tests are written first and frozen. The server flags any change outside the plan.
-6. **Tests run, failures retry** a limited number of times, then it goes to review for a human decision. The orchestrator finds the PR and CI results; you merge.
+1. **Triage, right-sized.** The orchestrator rates the story. A small, reversible change goes straight to coding; a risky or vague one pays for requirement, design and plan first. A big story is split into parts you review before anything is created.
+2. **Analysis in fresh sessions.** Each stage runs as a new read-only worker session and writes a Markdown document you can read and edit. Stages hand over through those documents, not chat history, so cost per step does not grow with the story.
+3. **You decide the risky parts.** You answer open questions and confirm documents, and a risky plan stops at an approval gate that the server enforces. Every reply ends with numbered options.
+4. **Coding on its own branch.** Implementation is a coding session on `story/<id>`, never `main`; optionally tests are written first and frozen, and the server flags changes outside the plan. Nothing is written into your repos otherwise.
+5. **Test, review, merge.** Tests run and failures retry a few times, then it goes to review. You merge.
 
-Read next: [workflow.md](docs/workflow.md) (the journey in detail) and [architecture.md](docs/architecture.md) (how the pieces fit).
+The orchestrator itself stays small: all state lives in the `workflow-state` server, so you can open a new chat any time and say `continue 2` or `resume PROJ-123`. Gates, read-only analysis, frozen tests and the scope check are enforced by the servers, not requested in a prompt. The same skills run on Copilot CLI, Claude Code, Cursor or a custom command. More: [workflow.md](docs/workflow.md), [architecture.md](docs/architecture.md).
 
-## What it can do
+## Quick start
 
-- **Three ways in:** a Jira key, a plain description, or resume by task id, Jira key or PR number.
-- **Triage by risk:** small reversible changes skip straight to coding; risky or vague ones get requirement, design and plan first.
-- **Versioned documents:** fixed templates, each revision kept, stamped with the skill version and AI platform that wrote it. Open and edit them in any editor.
-- **Approval gates** on risky plans, with an optional auto-approve timeout.
-- **Big stories split for review**, one child task per part, with a progress table on the parent.
-- **Branch per task**, never `main`, with a configurable name pattern.
-- **Tests first (optional)** with the tests frozen, a **scope check** against the plan, and **wrong-spec handling** that sends a task back instead of patching around it.
-- **Test, retry, review** with capped retries, then flagged for a human.
-- **Any AI platform** (Copilot CLI, Claude Code, Cursor, or a custom command) for the chat and for the workers, chosen independently, with the model settable per platform or per repo.
-- **Read-only enforced twice** for analysis: by the platform CLI where possible and by a git check afterwards.
-- **Memory:** durable team notes (learnings), the repo's own instruction files, and full-text search over past decisions.
-- **Resilience:** double-dispatch guard, lost-process detection, cancel, timeout, live elapsed time and last output, daily backups, automatic pruning of old session folders.
-- **Workspaces and multi-repo:** read context from other repos; split changes that span repos into one task per repo.
+**Needs:** Node 22.5+, Git, a chat tool with MCP support (Copilot CLI, Claude Code or Cursor), and the CLI of the AI that does the dispatched work, installed and signed in (Copilot: `npm install -g @github/copilot`, then run `copilot` once). Jira and GitHub MCP access is optional.
 
-## AI practices: covered and roadmap
+```
+# 1. Build (keep this folder where it is: the tools point at it)
+npm install
+npm run build
 
-Practices the community commonly expects when AI does software delivery, and where this project stands.
+# 2. Install the agent and register the servers (add --dry-run first to preview)
+#    --repo registers a repo and may be repeated; nothing is written into the repo
+node dist/cli/index.js install --target copilot-cli --repo D:/work/ProjectA
+node dist/cli/index.js install --target cursor      --repo D:/work/ProjectA
+node dist/cli/index.js install --target claude                        # prints the `claude mcp add` commands to run
 
-**Covered**
+# 3. Pin the model the dispatched sessions use (see the note below)
+node dist/cli/index.js config set default_platform copilot
+node dist/cli/index.js config set platforms.copilot.model gpt-6-luna
+```
 
-| Area | What you get |
-|---|---|
-| Context | Fresh one-shot worker sessions, a small orchestrator, hand-off through Markdown documents |
-| Memory | Learnings, repo instruction files (capped; files the AI CLI reads itself are not repeated, agents and skills are indexed), full-text search over past decisions |
-| Control | Approval gates, read-only analysis (enforced twice), a branch per task, never `main` |
-| Checks done by code | Scope check, frozen tests, double-dispatch guard, tests with capped retries |
-| Process | Triage by risk, requirement → design → plan, big-story split, wrong-spec return |
-| Independent review | Optional read-only review of the branch diff on a different platform or model than the coder, with a verdict and findings; see [workflow.md](docs/workflow.md) |
-| Traceability | Versioned documents stamped with skill version and platform, task history, PR lookup |
-| Operations | Model pinning, timeout, cancel, lost-process detection, daily backups, pruning |
-| Portability | Copilot CLI, Claude Code, Cursor or a custom command, chosen separately for chat and workers |
-| Feedback loop | `edge-case-review` turns recurring problems into rules, repo-instruction suggestions or learnings. The server counts logged edge cases and tasks out of test retries since the last review; at `edge_case_review_after` (policy, default 5, 0 = off) the orchestrator offers the review as one option, never runs it unasked |
-| Evals | `evals check` (free, offline) and `evals run` (live) test the five stage skills (four analysis skills and `code-review`) against fixed sample stories (8 cases), with `--repeat N` to measure flakiness. A free offline test also checks that the orchestrator prompt and skills only name tools that exist; see [Evals](#evals-for-skills-and-prompts) |
-| Data handling | Secret redaction on every prompt (on by default) and an untrusted-content warning in every dispatch; see [Data handling](#data-handling-and-secrets) |
-| Restricted workers | Secret files and risky commands are denied to worker sessions through each CLI's own rules, plus an optional OS sandbox; each dispatch records what was and was not enforced; see [Restrictions](#restricting-what-workers-can-touch) |
-| Team sharing | `shared_dir` in `config.json` moves `policy.json` and `learnings/` into a folder the team keeps in git; tasks and documents stay private. Sync is plain git; see [learnings.md](docs/learnings.md) |
-| Cost visibility | Every dispatch records token use; `dispatches usage` and the `get_usage` tool add it up per task, kind and platform; see [Cost](#cost-per-dispatch). A per-task budget can warn or block further dispatches |
-| Project knowledge | The agent co-writes Markdown docs from your instructions and selected source files, then publishes them one way, from your local files to Confluence, when you ask. No repo-wide scan; edits made on Confluence are never pulled back (you are warned before they are overwritten), and deletions are never propagated. See [knowledge-pipeline.md](docs/knowledge-pipeline.md) |
+4. Start a **new** chat session so it loads the agent. Select the **orchestrator** agent (Cursor: `@orchestrator-agent`) and say `hi`, then `which repos and AI platforms are set up?`
 
-**Roadmap:** knowledge synthesis and freshness tracking remain in [BACKLOG.md](BACKLOG.md).
+**The dispatched model is a separate setting.** The orchestrator runs on the model you picked in your chat window. Every stage it dispatches runs in a separate CLI session with its own model and billing. Unpinned, the CLI uses its own default, which may cost more than your chat model. Use the same model as your chat window (`/model` inside `copilot` lists valid names). A wrong name fails at once at no cost. Try the pipeline on one small story first.
+
+## Set up a project
+
+Run from this repo's folder (after `npm link` you can type `sdlc-orchestrator ...` anywhere). Omit `--repo` on `config set` for a global setting. You can also ask the chat agent to do any of this; it uses the same code.
+
+```
+# register, list, unregister repos
+node dist/cli/index.js repos add D:/work/ProjectA
+node dist/cli/index.js repos list
+node dist/cli/index.js repos remove D:/work/ProjectA
+
+# what is configured now
+node dist/cli/index.js config show --repo D:/work/ProjectA
+
+# which AI does the work (claude | copilot | cursor | a custom id) and with what model
+node dist/cli/index.js config set platform copilot --repo D:/work/ProjectA
+node dist/cli/index.js config set analysis_platform claude                 # read-only stages on another tool
+node dist/cli/index.js config set coding_platform copilot --repo D:/work/ProjectA
+node dist/cli/index.js model set gpt-6-luna --repo D:/work/ProjectA        # model for this repo (reset: model reset)
+
+# how tests run
+node dist/cli/index.js config set test_command "dotnet test App.sln" --repo D:/work/ProjectA
+
+# run several stories in parallel: each task codes in its own git worktree (off by default)
+node dist/cli/index.js config set worktree true --repo D:/work/ProjectA
+node dist/cli/index.js config set worktree_setup "npm ci" --repo D:/work/ProjectA   # run once in each new worktree
+node dist/cli/index.js config unset worktree --repo D:/work/ProjectA
+
+# checks on coding sessions
+node dist/cli/index.js config set tests_first true --repo D:/work/ProjectA          # write and freeze failing tests first
+node dist/cli/index.js config set scope_check fail --repo D:/work/ProjectA          # off | warn (default) | fail
+node dist/cli/index.js config set scope_allow "package-lock.json,docs/**" --repo D:/work/ProjectA
+
+# branch names (default story/{key}; {key} = Jira key, else task id)
+node dist/cli/index.js branch set "feature/{key}" --repo D:/work/ProjectA
+node dist/cli/index.js branch show
+```
+
+Settings take effect on the next dispatch. Every setting and its meaning: [docs/configuration.md](docs/configuration.md) (worktrees, base branches, workspaces with several repos, independent review, routing).
+
+## Use it
+
+Talk naturally. **Every reply ends with numbered Options** (confirm, revise, show, check status, run tests, cancel...). Answer with the number or the words.
+
+```
+Work on D:/work/ProjectA: add retry with backoff to the email sender (needs a schema change)
+start jira PROJ-123
+what's open?            lists unfinished stories across your registered repos, numbered
+continue 2              resumes number 2 (also: resume PROJ-123, a task id or a PR number)
+show the plan           prints a stored document
+remove 2                asks to confirm; "cancel" keeps the history, "remove" deletes it
+```
+
+A big story is split into parts you review before anything is created. A risky plan waits for "approve the plan". If a worker looks stalled the agent says so and offers keep waiting, cancel and retry, or another platform; it never cancels on its own. Tips for cheaper, faster runs: [docs/working-with-the-agent.md](docs/working-with-the-agent.md).
+
+**While you are away.** `autopilot` works the tasks of a repo unattended, takes only the decisions your policy allows (each one logged), parks the rest, and gives you a morning report. Code only ever lands on task branches.
+
+```
+node dist/cli/index.js autopilot enable
+node dist/cli/index.js autopilot start --repo D:/work/ProjectA --hours 8
+node dist/cli/index.js autopilot report
+```
+
+Details and limits: [docs/autonomous-mode.md](docs/autonomous-mode.md).
+
+## Command reference
+
+```
+install   --target copilot-cli|claude|cursor|all [--repo <path>]... [--mode global|repo] [--platform p] [--dry-run]
+          also: --analysis-platform, --coding-platform, --test-command, --no-integrations, --jira-server, --github-server
+repos     list | add <path>... | remove <path>...
+config    show [--repo p] | set <key> <value> [--repo p] | unset <key> [--repo p] | add-project <p> | remove-project <p>
+model     show | set <name> --repo p | reset --repo p
+branch    show | set <pattern> [--repo p] | reset [--repo p]
+tasks     list | show <task_id|JIRA-KEY|PR#> [--stage plan] | remove <task_id> [--yes] [--with-children]
+dispatches usage [--task id] [--days N] | prune [--days N] [--yes]
+autopilot enable | disable | start --repo p [--tasks a,b] [--hours N] [--max-dispatches N] | start --resume <run_id> | status | stop | report
+evals     check | run [--case name] [--platform p] [--model m] [--repeat N]
+knowledge claims | repair | check-module | freshness      (checks of knowledge pages against the code they cite)
+```
+
+`node dist/cli/index.js --help` has the full text. Settings keys for `config set`: `platform`, `analysis_platform`, `coding_platform`, `review_platform`, `model`, `branch_pattern`, `test_command`, `tests_first`, `scope_check`, `scope_allow`, `redact_secrets`, `worktree`, `worktree_setup` (per repo, or global without `--repo`); `default_platform`, `dispatch_timeout_minutes`, `dispatch_retention_days`, `platforms.<id>.model` (global only).
+
+What `install` writes (copilot-cli and cursor never modify the repo; `--repo` only updates the orchestrator's config):
+
+| Target | Agent file | MCP servers |
+|---|---|---|
+| `copilot-cli` | `~/.copilot/agents/orchestrator.agent.md` | `~/.copilot/mcp-config.json` |
+| `claude` | `~/.claude/agents/orchestrator.md` | prints `claude mcp add` commands to run |
+| `cursor` | `~/.cursor/agents/orchestrator-agent.md` | `~/.cursor/mcp.json` |
+
+Existing MCP config files are merged and backed up as `.bak` (comments in them are not preserved). With `copilot-cli --repo`, the folder is added to Copilot CLI's `trustedFolders` so it can load that folder's `.mcp.json`; review a project's MCP server definitions before trusting it.
+
+**After pulling an update:** `npm run build`, then `node dist/cli/index.js install --target <tool>`, then open a new chat. An existing `policy.json` needs no edit: new fields have defaults.
+
+## Where things are stored
+
+Everything is under `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`): `config.json` (platforms, models, repos), `policy.json` (stages, gates, retry limits, autonomy rules), `workflow.db` (tasks, history, approvals), `artifacts/<task_id>/<stage>.v<N>.md` (the stage documents, editable: the next stage reads your edits), `learnings/` (durable team notes), `dispatches/` (one folder per worker session), `backups/` (daily). Details: [docs/configuration.md](docs/configuration.md#configuration).
 
 ## Documentation
 
 | Read this | When |
 |---|---|
-| This README | What it is, install, daily use, commands, configuration, troubleshooting |
 | [docs/workflow.md](docs/workflow.md) | What happens to a story, step by step, and who does what |
-| [docs/architecture.md](docs/architecture.md) | Components, data, how a dispatch works, what the server checks, design decisions and open questions |
+| [docs/configuration.md](docs/configuration.md) | Files, worktrees, base branches, branch names, workspaces, models, review, tests first, scope, wrong specs |
+| [docs/autonomous-mode.md](docs/autonomous-mode.md) | Unattended runs: what may be decided, what parks, the morning report |
+| [docs/working-with-the-agent.md](docs/working-with-the-agent.md) | Phrasing requests and keeping cost down |
+| [docs/security.md](docs/security.md) | Secret redaction, untrusted content, worker restrictions per platform |
+| [docs/cost-and-evals.md](docs/cost-and-evals.md) | Token use, task budgets, skill evals |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Symptoms and fixes |
+| [docs/features.md](docs/features.md) | Full feature list and the AI practices covered |
+| [docs/architecture.md](docs/architecture.md) | Components, code layers, data, how a dispatch works, design decisions |
 | [docs/mcp-servers.md](docs/mcp-servers.md) | Every MCP server and tool |
-| [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md) | Repository knowledge generation, review and roadmap |
-| [docs/learnings.md](docs/learnings.md) | How durable team notes are stored and used |
+| [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md), [docs/learnings.md](docs/learnings.md) | Project knowledge and durable team notes |
 | [clients/README.md](clients/README.md) | Registering the servers by hand (including Claude Desktop) |
+| [BACKLOG.md](BACKLOG.md) | What is not done yet |
 
-Agent behaviour lives in [orchestrator-agent/SYSTEM_PROMPT.md](orchestrator-agent/SYSTEM_PROMPT.md) and [orchestrator-agent/skills/](orchestrator-agent/skills/).
-
-## Prerequisites
-
-| Need | Why |
-|---|---|
-| Node 22.5 or newer | Runs the servers (uses built-in `node:sqlite`, no native packages) |
-| Git | Coding sessions work on a `story/<id>` branch |
-| A chat tool with MCP support: Copilot CLI, Claude Code or Cursor | Where you talk to the orchestrator |
-| The CLI of the AI that does the dispatched work, installed **and signed in** | Copilot: `npm install -g @github/copilot`, then run `copilot` once. Claude: `claude`. Cursor: `cursor-agent` |
-| Optional: Atlassian (Jira/Confluence) and GitHub MCP access | Lets the agent read tickets, sync knowledge to Confluence, and find PRs. You sign in when your tool prompts |
-
-## Install (about 5 minutes)
-
-You install **two things**: the orchestrator (this repo, built once) and the registration of its two servers plus the agent prompt in your chat tool. Nothing is written into your project repos.
-
-**1. Build** (from this repo's folder; keep the folder where it is, because the tools point at it)
-```
-npm install
-npm run build
-```
-
-**2. Install the agent and register the servers** (pick your tool; `--repo` registers a repo, repeat it for several — nothing is written into the repo for copilot-cli/cursor)
-```
-# GitHub Copilot CLI (user agent + MCP; register repo for copilot dispatch)
-node dist/cli.js install --target copilot-cli --repo D:/work/ProjectA
-
-# Cursor IDE (~/.cursor agent + MCP; register repo for cursor-agent dispatch)
-node dist/cli.js install --target cursor --repo D:/work/ProjectA
-```
-Other tools: `--target claude`, `--target all`. Add `--dry-run` first to preview what would be written.
-
-**3. Pin the model for dispatched sessions** (important, see below). Edit `~/.ai-sdlc-orchestrator/config.json`:
-```json
-{
-  "default_platform": "copilot",
-  "platforms": { "copilot": { "model": "gpt-6-luna" } }
-}
-```
-Use the same model as your chat window. List valid names with `/model` inside `copilot`.
-
-**4. Start a new Copilot CLI session** so it loads the agent and MCP configuration.
-
-**5. Check it works.** Start a Copilot CLI or Cursor session, invoke the orchestrator (Copilot CLI: select **orchestrator**; Cursor: `@orchestrator-agent`), and say `hi`. You should get a list of what it can do. Then ask `which repos and AI platforms are set up?`
-
-### Important: the dispatched model is a separate setting
-
-The orchestrator runs in your chat window, using the model you picked there. Every stage it dispatches runs in a **separate CLI session with its own model and its own billing**. If you don't pin a model, the CLI uses its own default (for Copilot CLI this was `claude-sonnet-5.5`), which may be bigger and more expensive than your chat model. Set it in step 3, then reload so the dispatch server rereads the config. A single dispatch can also override it ("use model X for this stage"). To see what a run used, check the newest `process-*.log` in `~/.copilot/logs`. A wrong model name fails instantly at no cost. Sessions that explore a repo cost far more than a one-line reply, so try the pipeline on one small story first.
-
-## Use it
-
-Talk naturally. You never need to remember commands: **every reply ends with numbered Options** (confirm, revise, show, check status, run tests, cancel, remove...). Answer with the number or the words.
-
-**Start a story**
-```
-Work on D:/work/ProjectA: add retry with backoff to the email sender (needs a schema change)
-start jira PROJ-123
-```
-**See and continue stories**
-```
-what's open?            lists unfinished stories across your registered repos, numbered
-continue 2              resumes number 2
-resume PROJ-123         also works with a task id or PR number
-```
-**What happens to a story**
-1. The orchestrator triages it. A small, reversible change skips straight to implementation. A risky, breaking or vague one goes through **requirement → design → plan**.
-   A **big story** (many acceptance criteria, several independent deliverables, more than one PR, or several repos) is first run through **task-breakdown**. You get a numbered list of parts to review and edit, and nothing is created until you agree. The server enforces this: it refuses to create the parts until the breakdown is approved, and revising the breakdown voids the approval. Each part then becomes its own task with its own design, plan, approval and PR. The parent shows a progress table ("2 of 5 parts done") whenever you ask about it, and is never reported complete while a part is unfinished.
-2. Each analysis stage runs in a read-only worker session and produces an **artifact**. You read it, answer its open questions, and **confirm** or **revise** it (revisions are stored as new versions).
-3. A risky **plan** stops at an approval gate. Implementation is refused until you say "approve the plan".
-4. Implementation runs on a `story/<id>` branch (never `main`), then tests, then review. Optionally the tests are written first and frozen, and changes outside the plan are flagged ([details](#tests-first-scope-and-wrong-specs)).
-5. While a worker session runs, the agent waits for it (up to about 10 minutes per reply) and tells you how long it has been running. If it may be stalled (over about 10 minutes running, or 5 minutes without output) it offers: keep waiting, **cancel and retry**, or retry on another platform. It never cancels on its own. If it stops waiting, say `check status`.
-
-**See artifacts**: ask in chat ("show the plan"), or from a terminal (see Commands). **Remove a story**: say `remove 2` (it asks you to confirm; `cancel` keeps the history, `remove` deletes it permanently).
-
-## Commands
-
-Run from this repo's folder. After `npm link` you can type `sdlc-orchestrator ...` instead of `node dist/cli.js ...` from anywhere.
-
-```
-# install / refresh (re-run after editing orchestrator-agent/SYSTEM_PROMPT.md, then reload your tool)
-node dist/cli.js install --target copilot-cli|claude|cursor|all [options]
-node dist/cli.js install --target cursor --repo D:/work/ProjectA               # Cursor: ~/.cursor agent+MCP; register repo (platform cursor)
-node dist/cli.js install --target copilot-cli --repo D:/work/ProjectA          # Copilot CLI: ~/.copilot agent+MCP; register repo (platform copilot)
-
-# repos the agent can offer when you don't name one
-node dist/cli.js repos list
-node dist/cli.js repos add D:/work/ProjectB
-node dist/cli.js repos remove D:/work/ProjectB
-
-# change settings from the CLI (or ask the chat agent, which uses the same code through MCP tools)
-node dist/cli.js config show [--repo D:/work/ProjectA]
-node dist/cli.js config set worktree true --repo D:/work/ProjectA     # also: platform, model, test_command, tests_first, scope_check, worktree_setup, ...
-node dist/cli.js config set default_platform copilot                  # without --repo: a global setting
-node dist/cli.js config unset worktree --repo D:/work/ProjectA
-
-# AI model per repo (overrides platforms.<id>.model; a model named on one dispatch overrides both)
-node dist/cli.js model show [--repo D:/work/ProjectA]
-node dist/cli.js model set <model-name> --repo D:/work/ProjectA
-node dist/cli.js model reset --repo D:/work/ProjectA
-
-# branch naming for coding work (default story/{key}; {key} = Jira key, else task id)
-node dist/cli.js branch show [--repo D:/work/ProjectA]
-node dist/cli.js branch set "feature/{key}" --repo D:/work/ProjectA   # omit --repo for the global pattern
-node dist/cli.js branch reset [--repo D:/work/ProjectA]
-
-# stories and artifacts
-node dist/cli.js tasks list
-node dist/cli.js tasks show <task_id | JIRA-KEY | PR#>
-node dist/cli.js tasks show <task_id> --stage plan        # requirement | design | plan
-node dist/cli.js tasks remove <task_id>                   # preview; add --yes to delete (--with-children for sub-tasks)
-
-# old worker-session folders (also pruned automatically, see Configuration)
-node dist/cli.js dispatches prune                         # preview; add --yes to delete, --days N to override the retention
-
-# what the AI sessions used
-node dist/cli.js dispatches usage                         # all finished dispatches; --task <task_id> for one story, --days N for recent ones
-
-# project knowledge: ask the agent to draft from your instructions and exact source files, then sync approved docs to Confluence
-# no project scan or worker dispatch; local knowledge stays outside the source repo
-
-# skill evals
-node dist/cli.js evals check                              # free and offline: the golden documents must pass their checks
-node dist/cli.js evals run [--case <name>] [--platform <p>] [--model <m>] [--repeat N]   # live: real AI sessions, costs money
-```
-
-Install options: `--target`, `--mode global|repo` (claude only writes into the repo), `--repo <path>` (repeatable), `--platform`, `--analysis-platform`, `--coding-platform`, `--test-command`, `--no-integrations`, `--jira-server`, `--github-server`, `--dry-run`. `node dist/cli.js --help` lists them.
-
-Install writes, per target (copilot-cli / cursor never modify the repo; `--repo` only updates orchestrator config):
-
-| Target | Agent file | MCP servers |
-|---|---|---|
-| `copilot-cli` | `~/.copilot/agents/orchestrator.agent.md`; `--repo` sets `platform: copilot` | `~/.copilot/mcp-config.json` |
-| `claude` | `~/.claude/agents/orchestrator.md` | prints `claude mcp add` commands to run |
-| `cursor` | `~/.cursor/agents/orchestrator-agent.md` (`@orchestrator-agent`); `--repo` sets `platform: cursor` | `~/.cursor/mcp.json` |
-
-Existing MCP config files are merged, backed up as `.bak`, and comments inside them are not preserved. `copilot-cli` is the supported Copilot installer target; `copilot` remains the dispatch platform identifier for Copilot CLI worker sessions.
-
-When installing `copilot-cli` with `--repo`, that folder is added to Copilot CLI's `trustedFolders` in `~/.copilot/config.json`; a Copilot worker also adds its exact project root before launch. This lets Copilot CLI load that folder's `.mcp.json`. Review workspace MCP server definitions before trusting a project; existing Copilot settings are preserved and backed up as `.bak`.
-
-## Working with the agent effectively
-
-Every stage is a separate AI session that costs time and tokens, so most of the saving comes from how you phrase requests.
-
-**Say how big the change is**
-- "Small tweak: rename X to Y in `file`" goes into the task's change log and one coding session. No document is regenerated.
-- "Change the requirement/plan to ..." (scope, acceptance criteria, approach) revises the document and its downstream stages. Use it only when that is what you mean.
-- Several small things in one message become one coding session.
-- Be specific: name the file, line or value. The session then skips searching.
-- For familiar work, say "skip design" or "go straight to coding".
-
-**Let the agent change settings.** You can ask in chat ("set the test command for ProjectA to `dotnet test App.sln`", "turn worktrees on for ProjectA", "use copilot for ProjectA"), or run `config set` yourself. It changes only what you ask and tells you the old and new value.
-
-**Keep the cost down**
-- Start a new chat for each task. A long chat carries every earlier artifact and tool result in every turn.
-- Set `test_command` for repos with more than one solution or project, otherwise `run_tests` fails at once.
-- Put a one-line `description:` in each skill and agent file of the repo. Analysis prompts list these files by description instead of including them, so the description is what lets the session choose.
-- Keep the repo's instruction files short. What the AI CLI loads itself is not repeated in the prompt, and the rest is capped (`repo_instructions_max_chars`, default 12000).
-- Saved knowledge pages reach worker sessions as a short index (path, type, summary, what each covers), capped near 3000 characters; the session opens a page only when it fits the task, and the code wins when a page disagrees. Nothing is added when a project has no pages. Turn it off with `knowledge_in_prompts: false`, globally or per project.
-- Set a budget (`budget.task_tokens`, `action: "warn"`) and ask "what did this task cost?" (`get_usage`). Copilot reports no usage, so its numbers are lower bounds.
-- Turn on `worktree` only to run stories in parallel: each one is a full copy of the repo.
-
-**Do by hand (the agent cannot)**
-- After pulling an update: `npm run build`, then `node dist/cli.js install --target <tool>`, then restart the tool or open a new chat.
-- Check that both MCP servers are started and their tool groups enabled in your AI tool. If a tool is missing the agent says so and stops.
-- Edit files in the repo itself (for example skill descriptions) as an ordinary coding task.
-
-**If it takes the slow path anyway**: say "small tweak, no analysis". The rules are written into the agent's prompt, which the model follows most of the time, not always.
-
-## Configuration
-
-Everything lives in `~/.ai-sdlc-orchestrator/` (override with `SDLC_DATA_DIR`):
-
-| File | Contents |
-|---|---|
-| `config.json` | Which AI platform and model do the work, per repo overrides, registered repos, custom platforms (example: `config/config.example.json`) |
-| `policy.json` | Stages, approval gates (with optional auto-approve timeout), retry limits. Invalid edits are rejected |
-| `workflow.db` | Tasks, history, approvals, and each stage document's metadata and search index (SQLite). The documents themselves are not stored here |
-| `artifacts/<task_id>/<stage>.v<N>.md` | The stage documents (requirement, design, plan...) as Markdown, one file per revision. Open and review them in any editor; the next stage reads the file, so your edits count. Databases from older versions are migrated to files automatically on first start |
-| `learnings/` | One markdown file per repo plus `_global.md`: durable notes about ticketing quirks, team habits and how requests are phrased. Injected into every dispatch. Hand-editable; max 20 notes per file. Name a repo's file with `projects.<root>.slug` in `config.json`, else `<folder>-<hash>` |
-| `dispatches/` | One folder per worker session: the prompt sent, raw output, status. Finished ones older than `dispatch_retention_days` (default 14, `0` keeps all) are deleted when the dispatch server starts; running ones never are. Stage documents are not affected (they live in `artifacts/`) |
-| `backups/` | Daily copy of `workflow.db`, `learnings/` and `artifacts/`, newest 14 kept |
-
-### Two stories from different branches
-
-Every task has a `base_branch`: the branch its work starts from and is reviewed against. You normally do not set it. Check out the branch you want, open the chat and say "start story A": the task records what is checked out (`dev`). Later switch to `release` and say "start story B": that one records `release`. To say it in words instead, "start story B based on `release`". If you left the checkout on a story branch, the next story takes that story's base, never the story branch itself. The orchestrator tells you which base it picked, and "base it on X" changes it before work starts.
-
-Stories share the repo checkout, so only one can have a coding session running at a time. The server refuses to start a second story's coding session until the first finishes, because switching branches under a running session would break it. While a session runs, leave the checkout alone. Stories with different bases cannot conflict until you merge both into one branch; the file-overlap check tells you when two stories touch the same files and whether their bases match. To run stories in parallel, turn on a worktree per task for that repo (off by default):
-
-```json
-{ "projects": { "D:/work/ProjectA": { "worktree": true, "worktree_setup": "npm ci" } } }
-```
-
-Each task then codes in its own git worktree under the data folder (`worktrees/<repo>/<task>`), on the task's branch, so the main checkout is never switched and stories do not block each other. A new task branch starts from the task's base branch (`set_task_base` / `base_branch`), else from the branch currently checked out in the main repo; an existing branch is checked out as it is. A task's retries reuse its worktree; only one session per task runs at a time. `run_tests` runs there too. `worktree_setup` is an optional command run once in a new worktree, because ignored files such as `node_modules` are not part of it. When a story is merged or dropped, `remove_worktree` deletes the folder (the branch stays); it refuses while a session runs or work is uncommitted unless `force=true`. Cost: every worktree is a full working copy, so a very large repo needs that much disk per story. Not available for workspaces with `child_repos`; set it on each child repo's own entry instead.
-
-**Branch names.** Coding work always runs on its own branch, created automatically from whatever is checked out. The default name is `story/<Jira key or task id>` (the installer writes it to `config.json` as `branch_pattern`; it never overwrites one you set). To follow your team's convention, run `node dist/cli.js branch set "feature/{key}" --repo <path>` (see Commands; it validates the pattern and shows an example name), or set `branch_pattern` globally or per repo in `config.json` yourself:
-```json
-{
-  "branch_pattern": "story/{key}",
-  "projects": { "D:/work/ProjectA": { "branch_pattern": "feature/{key}" } }
-}
-```
-Placeholders: `{key}` (Jira key, or the task id when there is none), `{jira_key}` (same fallback), `{task_id}`. The per-repo value wins. A pattern must contain a placeholder and may not produce `main`/`master`; an invalid one is reported on the task and blocks coding dispatch rather than creating a wrong branch.
-
-**Workspace root that is not a git repo.** If the folder you register is a plain directory whose children are the git repos, list them in `config.json`:
-```json
-{ "projects": { "D:/work/Platform": { "child_repos": ["api", "web"], "test_command": "npm test" } } }
-```
-Branches are created in the child repos, never in the root, by giving each repo its own task: the orchestrator runs analysis at the workspace root (read-only, covering every child and their instruction files), then splits implementation into one child task per repo, each with `project_root` set to that child's path. A child task is an ordinary single-repo task with its own branch, dispatch, tests and PR, and it inherits the workspace's `platform`, `model`, `branch_pattern` and `test_command` unless the child has its own `projects` entry. `dispatch_coding_task` and `run_tests` on the workspace root itself are refused with a message listing the children. Without `child_repos` nothing changes.
-
-**Model per repo.** The model is normally set per platform (`platforms.<id>.model`), so every repo using that platform shares it. To give one repo its own, use `model set` (Commands) or `projects.<root>.model` in `config.json`. Precedence: a model named on a single dispatch, then the repo's `model`, then the platform's `model`, then the CLI's own default. The name must be valid for that repo's AI CLI; a repo whose analysis and coding run on different platforms should keep using the per-platform setting.
-
-**Independent review.** After the tests pass, the orchestrator can offer one extra read-only session that reviews the task branch's diff against `main` (or `base_branch`) and judges it against the requirement and plan: see [workflow.md](docs/workflow.md). It runs on a platform or model other than the coder's where one is configured, and says whether it really was independent. To choose the reviewer yourself:
-```json
-{ "review_platform": "claude", "projects": { "D:/work/ProjectA": { "review_platform": "cursor" } } }
-```
-The default is any configured platform other than the one that wrote the code, so list at least two under `platforms` (or `default_platform` plus one) to get a real second opinion. A repo-wide `model` is not passed to a reviewer on another platform, because that model name may not exist there; pass `model` on the call to set one. The review is advice, a document with a verdict and findings, and it never changes the task.
-
-Routing example: orchestrate from Copilot CLI, analysis on Claude, coding on Copilot, and a different tool for one repo:
-```json
-{
-  "default_platform": "copilot",
-  "analysis_platform": "claude",
-  "projects": { "D:/work/Legacy": { "coding_platform": "cursor", "test_command": "npm test" } }
-}
-```
-
-### Tests first, scope and wrong specs
-
-Three checks on the implementation stage. They are enforced by the dispatch server after each session, not by asking the AI nicely.
-
-**Scope.** The plan's "Files touched" is the allowed scope of the coding session. Files it changes outside that list are reported to you. Set what happens in `config.json` (global, or per repo under `projects`):
-```json
-{ "scope_check": "warn", "projects": { "D:/work/ProjectA": { "scope_check": "fail", "scope_allow": ["package-lock.json", "docs/**"] } } }
-```
-`warn` (default) lets the work finish and shows you the extra files so you can keep them, revert them or revise the plan; `fail` fails the dispatch; `off` skips the check. `scope_allow` takes files, directories or globs that are always fine.
-
-**Tests first (optional, off by default).** One extra AI session writes the failing tests from the plan's Test Plan before any code exists. The server checks they fail for the right reason, then freezes them: the coding session must make them pass and cannot edit them (a change fails the dispatch, with the original saved aside). It costs roughly one extra session per task, so it is worth it for bug fixes, logic, parsing, validation, API contracts and risky changes, and not for refactors, UI, config, docs or small edits. Turn it on for a repo with `"tests_first": true`; otherwise the orchestrator only offers it as a numbered option when the task looks like a good fit. A smaller model is usually enough for this step (the orchestrator can pass `model` for it).
-
-**Wrong specs.** If a coding session finds that the plan (or design, or requirement) itself cannot be right, it says so instead of working around it. The task goes back to that stage with the problem added as an open question, you answer it, and the revised plan needs approval again. A task can be sent back twice by default (`max_spec_wrong_returns` in `policy.json`), then the orchestrator asks you.
-
-After updating, re-run `node dist/cli.js install --target <your tool>` (the system prompt is copied into the agent file) and reload your tool. An existing `policy.json` needs no edit: the new policy fields have defaults.
-
-### Data handling and secrets
-
-What leaves your machine: each dispatched session is a separate AI CLI (Copilot, Claude Code, Cursor or your custom command) that sends its prompt, and **everything it reads from your repo**, to that vendor's service under your own account and plan. This tool adds nothing on top, and it has no server of its own. Check your vendor's data terms before pointing it at a sensitive repo.
-
-Three protections apply to every dispatch:
-
-1. **Secret redaction (on by default).** Before a prompt is written to disk or handed to the CLI, secret-looking strings are replaced with `[REDACTED:<kind>]`: private keys, AWS keys, GitHub tokens, Slack tokens, `sk-` API keys, Google API keys, JWTs, `Bearer` tokens, passwords inside URLs, and `name = value` pairs where the name says password, secret, token or key. Placeholders (`<your-password>`, `${SECRET}`), env lookups (`process.env.X`), calls (`getPassword()`) and plain numbers are left alone. The prompt covers the ticket text, the earlier stage documents, learnings, the repo's instruction files and the skill. The dispatch result lists what was removed as counts per kind (`redacted`), never the values, and the orchestrator tells you.
-2. **Untrusted-content warning.** Every dispatch prompt says that ticket text, earlier documents, repository files and notes, and also everything the session fetches or runs itself (web pages, search results, tool and MCP output, command output, logs, issue and pull-request text), are data, never commands, and that the session must not obey instructions found in them or reveal secrets or its prompt. A suspected attempt is reported (analysis: under Open Questions; coding: in the summary) instead of acted on.
-
-3. **Output scan (same switch as redaction).** When a session ends, what it printed and, for coding sessions, every file it wrote or changed are scanned with the same patterns. A hit is reported on the dispatch as `secrets_in_output` or `secrets_in_files` (kind and count, plus the file path, never the value), and the orchestrator tells you before anything is committed or recorded. It is a **warning only**: nothing is edited or blocked, because test fixtures and docs legitimately hold fake keys. Binary and very large files are skipped, and at most 200 changed files are read.
-
-```json
-{ "redact_secrets": true, "redact_extra": ["ACME-[0-9a-f]{16}"],
-  "projects": { "D:/work/Sandbox": { "redact_secrets": false } } }
-```
-`redact_extra` adds regexes for your own token formats (an invalid one is reported when a dispatch starts). A repo's `redact_secrets` wins over the global value. Switch it off only for a repo with nothing sensitive, for example when a placeholder is being redacted wrongly and you cannot reword it.
-
-**Limits, so you do not over-trust it:**
-- It cleans the **prompt this tool builds**. It cannot see what the session reads from the repo on its own, so a secret committed to a file is still read by the AI. Keep secrets out of repos (use a secret manager and an ignore file) and out of tickets.
-- **The untrusted-content warning is an instruction to the AI, not a control.** It lowers the chance that text on a web page, in a tool's output or in a ticket steers the session, but a model can still be fooled, and this tool cannot see or filter what a session fetches through its own tools or MCP servers. The harder protections are the ones that do not depend on the model: read-only analysis that is checked afterwards, the approval gate before risky plans, scope and frozen-test checks, the restriction rules and the output scan (all above). Keep a worker's tools and MCP servers to what a task needs, because every extra source is a place instructions can come from.
-- A pattern list misses secrets: a short or unusual password, a key in a format it does not know, an obfuscated value. It can also redact a harmless string. Treat it as the last line of defence.
-- The untrusted-content warning lowers the risk of prompt injection; it does not remove it. The structural protections still carry the weight: analysis runs read-only (enforced twice), coding runs on its own branch, learnings are never written from ticket or session text, and a human approves risky plans and merges.
-- Already-sent text is not recalled. If a secret reached a ticket, rotate it.
-
-### Cost per dispatch
-
-Each finished dispatch records `usage` in its `meta.json`. Where the number comes from depends on the AI CLI:
-
-| Platform | Tokens | Cost |
-|---|---|---|
-| Claude Code | `reported`: exact, from the CLI (cached input counted as input) | reported in USD |
-| Copilot CLI, Cursor, custom | `estimated`: prompt sent plus text printed, about 4 characters per token | not available |
-
-An estimate is a **lower bound**: a session that explores a repo reads far more than its prompt, and that reading is not counted. Use it to compare runs and spot the stage that is growing, not to bill. `node dist/cli.js dispatches usage --task <id>` (or ask the orchestrator, which has the `get_usage` tool) adds it up by kind, platform and task, and says how many numbers are exact.
-
-There is no limit on a single running session: it cannot be stopped by token count, only by `dispatch_timeout_minutes`. What you can set is a **budget per task**, checked between dispatches:
-
-```json
-{ "budget": { "task_tokens": 400000, "task_cost_usd": 5, "action": "warn" },
-  "projects": { "D:/work/ProjectA": { "budget": { "task_tokens": 150000, "action": "block" } } } }
-```
-- `task_tokens` counts input plus output of the task's finished dispatches; `task_cost_usd` counts only costs the CLI reported (Claude Code). Set either or both. A repo's `budget` overrides the global one field by field.
-- `warn` (default): a dispatch that leaves the task at or over budget carries a `budget_warning`, and the orchestrator tells you and asks before dispatching more. Work is never stopped.
-- `block`: once the task is over, new dispatches for it are refused with a message. You can ask the orchestrator to continue anyway (it passes `override_budget`), or raise the budget.
-- Because estimated tokens are a lower bound, a task can be over budget before the numbers say so. For a Claude Code repo the numbers are exact. `get_usage` with `task_id` and `project_root` shows a task against its budget.
-
-### Restricting what workers can touch
-
-Worker sessions run with your account's access. Redaction (above) only cleans the prompt this tool builds, so a worker can still open a `.env` file by itself. **Restrictions** pass deny rules to the AI CLI. They are on by default with a short list:
-
-- **Secret files** (never read or written): `.env`, `.env.local`, `.env.*.local`, `.env.production`, `.env.development`, `.env.staging`, `*.pem`, `*.key`, `*.pfx`, `*.p12`, `id_rsa`, `id_ed25519`, `**/secrets/**`, `**/.ssh/**`, `**/.aws/**`. `.env.example` stays readable.
-- **Commands** a coding session may not run: `sudo`, `ssh`, `scp`.
-
-Add your own, globally or per repo (lists add up; the repo's `sandbox` and `enabled` override the global ones):
-
-```json
-{ "restrictions": { "deny_commands": ["curl", "git push"], "deny_read": ["config/prod.json"] },
-  "projects": { "D:/work/ProjectA": { "restrictions": { "sandbox": true } } } }
-```
-
-`"enabled": false` turns all of it off. `git push` is not denied by default because coding sessions may open a pull request.
-
-What each platform actually enforces (every dispatch result has `restrictions.applied` and `restrictions.not_enforced`, and the orchestrator tells you about the latter):
-
-| | Secret files | Commands | `sandbox: true` |
-|---|---|---|---|
-| Claude Code | Deny rules in a settings file. Also covers `cat`, `head`, `tail` it recognises in Bash, not a script that opens the file itself | `Bash(<command> *)` deny rules. Does not match `/usr/bin/curl` or `sh -c '...'` | OS sandbox for Bash. Not available on native Windows: the session then fails instead of running unsandboxed |
-| Copilot CLI | `read()` and `write()` deny rules for Copilot's own file tools, not for shell commands | `shell()` deny rules, matched by command and first subcommand (`git push`) | `--sandbox` (OS sandbox for shell commands) |
-| Cursor Agent | Not enforced: Cursor reads deny rules only from its own config files, which this tool never edits. Add `Read(...)` entries to `~/.cursor/cli-config.json` yourself | Same, `Shell(...)` entries | `--sandbox enabled` |
-| Custom CLI | Not enforced | Not enforced | Not enforced |
-
-These are rules of the AI tool, not a security boundary of this tool. A deny rule stops the tool from reading a file through its own file tools; only an OS sandbox stops a shell command or a script from doing so, and keeping secrets out of the repo folder is still the strongest protection. The Claude sandbox and the Copilot `--sandbox` flag are taken from each CLI's documentation and help and have not been run live here.
-
-### Evals for skills and prompts
-
-`evals/cases/*.json` are fixed sample stories, one or two per stage skill (`requirement-analysis`, `design-analysis`, `plan-creation`, `task-breakdown`, `code-review`). Each has a small fixture repo and **shape checks** on the document the skill produces: the template headings, numbered acceptance criteria, open questions in the `- **Q1.**` format the tooling reads, no design talk in a requirement, a Test Plan with at least two behaviours, "No split" answered exactly. `evals/golden/*.md` holds a known-good document for each case.
-
-- `evals check` is free and runs inside `npm test`. It proves the checks accept the golden documents and reject broken ones, and that every analysis skill has a case.
-- `evals run` sends each case through the real dispatch path (same prompt builder, same platform adapter, same read-only guard) in a throwaway repo, judges the document, saves the run under `~/.ai-sdlc-orchestrator/evals/results/`, and reports a **REGRESSION** when a case that passed last time fails now, with both skill versions (content hashes). Run it after editing a skill, and when you change the model. `--repeat N` runs each case N times and lists a case that passed some runs and failed others as **FLAKY** (not a regression, since some runs passed). It costs one real session per case per repeat, so try `--case requirement-retry` first.
-
-What it does not do: judge whether the content is *good* (a wrong but well-formed requirement passes), run the orchestrator's own system prompt, or repeat a case to measure how often a flaky skill fails. Add a case when a real story goes wrong in a way the checks could have caught (`evals/cases/<name>.json` plus `evals/golden/<name>.md`; the name must match the file name).
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
-|---|---|
-| Agent says it has no tools / can't find the orchestrator | Reload the window, open "MCP: List Servers", start the four servers. Start a **new** chat after changing the prompt (old chats keep the old one) |
-| "GitHub Copilot CLI was not found" or `UnsupportedWindowsCommandValue` | The Copilot CLI isn't installed, or only VS Code's `copilot-shim` is on PATH. Install it (`npm install -g @github/copilot`) and run `copilot` once. The dispatcher launches the real binary on Windows |
-| Worker session says "Skipped workspace MCP servers ... not trusted" | Harmless warning. Trust the folder in the CLI if the worker needs repo-level MCP servers |
-| Cursor Agent: "Workspace Trust Required" / exits 1 on analysis | Headless `cursor-agent` needs `--trust`. The Cursor adapter always passes it; rebuild (`npm run build`) and reload MCP if you still see the old error |
-| Agent says "still running" and stops | Say `check status`. A stage takes 1 to 5 minutes. Past that, the agent reports the elapsed time and offers to cancel and retry; `dispatch_timeout_minutes` (default 30, lower it in `config.json` if stages are quick) kills a session that runs too long and marks it failed |
-| `spawn ENAMETOOLONG` on Windows | The prompt was too long for a command line. Prompts over 8,000 characters are now passed as a file; rebuild and reload if you still see it |
-| A story is missing from "what's open?" | Check `node dist/cli.js tasks list`; make sure the repo is registered (`repos list`) |
-| `Model "x" is not available` | Fix the name in `config.json` (see `/model` in `copilot`) |
-| Dispatch failed for another reason | Read `~/.ai-sdlc-orchestrator/dispatches/<id>/meta.json` (`error`, `stderr_tail`, `output`) |
-| Changes to the code have no effect | Run `npm run build`, then reload your tool (the servers run from `dist/`) |
+Agent behaviour lives in [orchestrator-agent/SYSTEM_PROMPT.md](orchestrator-agent/SYSTEM_PROMPT.md), [orchestrator-agent/playbooks/](orchestrator-agent/playbooks/) and [orchestrator-agent/skills/](orchestrator-agent/skills/).
 
 ## Development
 
 ```
-npm run build     # compile to dist/
+npm run build     # clean and compile to dist/
 npm test          # build + run the test suite
 ```
 
-- `src/workflow-state/`: MCP server, policy, SQLite schema and all workflow rules.
-- `src/dispatch/`: MCP server, platform adapters (`platforms.ts`), process runner (`runner.ts`: start, watch, cancel), post-session checks (`guards.ts`), prompt building, and `repo-instructions.ts` (the repo's own `CLAUDE.md` / `.github/agents` / skills, injected into read-only analysis sessions as context).
-- `src/common/`: config loading, the dispatch record store (`dispatch-store.ts`) and the per-repo learnings store.
-- `src/cli.ts`: the `install`, `repos`, `model`, `branch`, `tasks` and `dispatches` commands.
-- `orchestrator-agent/`: system prompt and skills (the skills run by dispatched sessions are injected into their prompt; the three the chat agent runs itself are embedded in its agent file at install time).
-- `clients/README.md`: manual registration steps, including Claude Desktop.
-- `docs/`: this documentation. [architecture.md](docs/architecture.md) is the best starting point for a new contributor.
+The source is layered; a module imports only from its own layer or the ones below it ([diagram](docs/architecture.md#code-layers)): **interfaces** (`src/mcp/workflow`, `src/mcp/dispatch`, `src/cli`), **domains** (`src/workflow`, `src/dispatch`, `src/knowledge`, `src/autopilot`, `src/evals`), **stores and settings** (`src/stores`, `src/config`), **shared** (`src/shared`). `orchestrator-agent/` holds the system prompt, playbooks and skills; `docs/architecture.md` is the best starting point for a new contributor.
 
 The Copilot CLI and Cursor adapters have been run against the real CLIs. The Claude Code adapter follows that tool's documented flags but has not been verified against it.

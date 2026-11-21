@@ -2,8 +2,8 @@ import { existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
-import { dataDir, normRoot } from "../common/paths.js";
-import { worktreeSettings } from "../common/config.js";
+import { dataDir, normRoot } from "../shared/paths.js";
+import { worktreeSettings } from "../config/config.js";
 import { ensureBranch, getDispatch, git, resolveBase, changedFiles } from "./runner.js";
 
 /** A write session still running in this repo: another task's (the checkout cannot be shared by two of them), or with sameTask this task's own. */

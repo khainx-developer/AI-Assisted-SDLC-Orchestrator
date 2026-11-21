@@ -96,7 +96,7 @@ Stages take roughly 1 to 5 minutes (coding can take longer). The orchestrator wa
 
 `what's open?` lists unfinished stories across your registered repos, numbered. `continue 2`, `resume PROJ-123`, a PR number or a task id all resume a story, and show where it is, what was decided, and what it is waiting on.
 
-You can also inspect a story from a terminal without the chat: `node dist/cli.js tasks show <task>`.
+You can also inspect a story from a terminal without the chat: `node dist/cli/index.js tasks show <task>`.
 
 ## Who does what
 

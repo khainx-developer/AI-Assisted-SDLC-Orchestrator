@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, linkSync, unlinkSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { dataDir, normRoot } from "../common/paths.js";
-import { loadConfig, redactSettings } from "../common/config.js";
-import { DEFAULT_DENY_READ, restrictionsFor } from "../common/restrictions.js";
-import { redactSecrets } from "../common/redact.js";
-import { slugFor } from "../common/learnings.js";
+import { dataDir, normRoot } from "../shared/paths.js";
+import { loadConfig, redactSettings } from "../config/config.js";
+import { DEFAULT_DENY_READ, restrictionsFor } from "../config/restrictions.js";
+import { redactSecrets } from "../config/redact.js";
+import { slugFor } from "../stores/learnings.js";
 
 const MAX_SOURCE_FILES = 12;
 const MAX_SOURCE_FILE_BYTES = 256 * 1024;

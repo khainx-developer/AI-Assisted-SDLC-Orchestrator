@@ -27,7 +27,7 @@ execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q"
 
 const { PLATFORMS } = await import("../dispatch/platforms.js");
 const { startAgentDispatch, getDispatch } = await import("../dispatch/runner.js");
-const { usageSummary, estimateTokens, formatRow } = await import("../common/usage.js");
+const { usageSummary, estimateTokens, formatRow } = await import("../stores/usage.js");
 const { checkArtifact } = await import("../evals/checks.js");
 const { loadCases, goldenFor, checkGoldens, runCase, runEvals } = await import("../evals/run.js");
 

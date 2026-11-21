@@ -20,8 +20,8 @@ execFileSync("git", ["init", "-q"], { cwd: repo });
 execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo });
 
 const { startAgentDispatch, getDispatch } = await import("../dispatch/runner.js");
-const { budgetStatus, budgetFor } = await import("../common/budget.js");
-const { dispatchDir, metaFile } = await import("../common/dispatch-store.js");
+const { budgetStatus, budgetFor } = await import("../stores/budget.js");
+const { dispatchDir, metaFile } = await import("../stores/dispatch-store.js");
 
 async function wait(id: string) {
   for (let i = 0; i < 100; i++) { const m = getDispatch(id); if (m.status !== "in-flight") return m; await new Promise((r) => setTimeout(r, 100)); }

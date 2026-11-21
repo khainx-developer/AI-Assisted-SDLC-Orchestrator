@@ -8,10 +8,10 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p .",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "start:workflow-state": "node dist/workflow-state/server.js",
-    "start:dispatch": "node dist/dispatch/server.js"
+    "start:workflow-state": "node dist/mcp/workflow/server.js",
+    "start:dispatch": "node dist/mcp/dispatch/server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -22,6 +22,6 @@
     "typescript": "^5.6.0"
   },
   "bin": {
-    "sdlc-orchestrator": "dist/cli.js"
+    "sdlc-orchestrator": "dist/cli/index.js"
   }
 }
